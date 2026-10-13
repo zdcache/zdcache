@@ -132,8 +132,42 @@ zdcache is compared with three key-value caches (Caffeine, cache2k and Guava) an
 > **Disclaimer:** these numbers were collected by running the benchmark on the author's development machine. Results vary with hardware, JVM, load and data shape, so treat them as an indication of gains and losses, not as guarantees. Run the benchmark on your own machine and data before deciding.
 
 <!-- benchmark-summary:start -->
-Not published yet: run `./benchmark -full`, then `./benchmark -publish`.
+Measured 2026-10-13T13:28:26Z on Java 21.0.6 with 11 CPUs, 3 forks per benchmark, at 100,000 entries. Lower is better for time and memory; higher is better for operations per second.
+
+**Single thread and memory**
+
+| | get | put | Memory per entry |
+|---|---:|---:|---:|
+| zdcache | 28 ns | 84 ns | 123 B |
+| zdcache, 4 indexes | 42 ns | 2,638 ns | 424 B |
+| Caffeine | 40 ns | 125 ns | 109 B |
+| cache2k | 13 ns | 40 ns | 107 B |
+| Guava | 43 ns | 119 ns | 99 B |
+| CQEngine, 4 indexes | 380 ns | 4,458 ns | 769 B |
+
+**Concurrent, 8 threads (million operations per second)**
+
+| | Reads only | Mixed: reads | Mixed: writes |
+|---|---:|---:|---:|
+| zdcache | 33 | 11 | 0.60 |
+| zdcache, 4 indexes | 33 | 18 | 0.13 |
+| Caffeine | 84 | 47 | 6.5 |
+| cache2k | 179 | 79 | 6.6 |
+| Guava | 13 | 15 | 0.01 |
+| CQEngine, 4 indexes | 14 | 12 | 0.09 |
+
+**Search**
+
+| | Prefix | Exact | Compound | Range |
+|---|---:|---:|---:|---:|
+| zdcache, 4 indexes | 1.3 µs | 15 µs | 2.3 µs | 183 µs |
+| CQEngine, 4 indexes | 20 µs | 22 µs | 35 µs | 242 µs |
+| Caffeine (full scan) | 913 µs | 1,266 µs | 1,146 µs | 1,467 µs |
+| cache2k (full scan) | 1,966 µs | 2,414 µs | 2,642 µs | 3,222 µs |
+| Guava (full scan) | 2,537 µs | 3,101 µs | 2,895 µs | 2,733 µs |
 <!-- benchmark-summary:end -->
+
+How to read it: on one thread, zdcache's key lookup is in the same range as Caffeine and Guava, with cache2k the fastest, and keeping four indexes up to date costs about 2.6 µs per `put`. Searches through indexes are about 15× faster than CQEngine for prefix and compound queries, 1.3–1.5× for exact and range queries, and 8–2,000× faster than scanning a cache. Under concurrent load zdcache reads at about 40% of Caffeine's rate and a fifth of cache2k's while keeping strict LRU order; writes are where it lags most, at about a tenth of Caffeine's write throughput without indexes. Choose zdcache when you look cached objects up by more than their key; for key-only caching with many concurrent writes, Caffeine or cache2k fits better.
 
 None of the benchmarks put the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts in LRU order per segment and zdcache in strict LRU order. CQEngine never evicts.
 
