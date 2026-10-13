@@ -332,10 +332,12 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
         return stripes.get(index);
     }
 
-    private int stripeIndex() {
-        long thread = Thread.currentThread().threadId();
-        int hash = (int) (thread ^ (thread >>> 32)) * 0x9E3779B9;
-        return (hash ^ (hash >>> 16)) & (stripes.length() - 1);
+    int stripeIndex() {
+        return (int) Thread.currentThread().threadId() & (stripes.length() - 1);
+    }
+
+    int stripeCount() {
+        return stripes.length();
     }
 
     private void maintain() {

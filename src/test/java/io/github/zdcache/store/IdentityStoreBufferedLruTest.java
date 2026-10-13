@@ -393,4 +393,16 @@ class IdentityStoreBufferedLruTest {
 
         assertEquals(List.of(3, 2, 1), lruOrder(store));
     }
+
+    @Test void threadsCreatedOneAfterAnotherReadThroughSeparateBuffers() throws Exception {
+        var store = new IdentityStoreBufferedLru<Integer, String>(10);
+        int threads = Math.min(8, store.stripeCount());
+        var indexes = java.util.Collections.synchronizedSet(new HashSet<Integer>());
+        var workers = new ArrayList<Thread>();
+        for (int t = 0; t < threads; t++) workers.add(new Thread(() -> indexes.add(store.stripeIndex())));
+        for (Thread worker : workers) worker.start();
+        for (Thread worker : workers) worker.join();
+
+        assertEquals(threads, indexes.size());
+    }
 }
