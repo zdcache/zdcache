@@ -24,4 +24,6 @@ public interface IdentityStore<ID, T> {
     List<EvictedEntry<ID, T>> drainEvictions();
 
     default boolean concurrent() { return false; }
+
+    default boolean concurrentWrites() { return false; }
 }

@@ -25,11 +25,13 @@ public final class TypeCache<T, ID> {
     private final Lock read = lock.readLock();
     private final Lock write = lock.writeLock();
     private final IdentityStore<ID, T> store;
+    private final Class<T> type;
     private volatile SearchSpecification<T, ID> specification;
     private volatile DimensionRegistry<T, ID> indexes;
 
     public TypeCache(SearchSpecification<T, ID> spec, IdentityStore<ID, T> store) {
         this.specification = Objects.requireNonNull(spec);
+        this.type = spec.type();
         this.store = Objects.requireNonNull(store);
         this.indexes = new DimensionRegistry<>(spec);
     }
@@ -46,30 +48,43 @@ public final class TypeCache<T, ID> {
 
     /** Can be called without supplied spec after registration; explicit IDs are checked if extractable. */
     public void put(ID id, T entity, SearchSpecification<T, ID> suppliedOrNull) {
+        if (store.concurrentWrites() && !specification.searchable()) {
+            read.lock();
+            try {
+                if (!specification.searchable()) {
+                    store(id, entity, suppliedOrNull);
+                    return;
+                }
+            } finally { read.unlock(); }
+        }
         write.lock();
         try {
-            if (suppliedOrNull != null) requireSameSpecification(suppliedOrNull);
-            if (!specification.type().isInstance(entity)) {
-                throw new IllegalArgumentException("Entity does not match " + specification.type());
-            }
-            IdentityDimension<T, ID> identity = specification.identity();
-            if (!identity.isExplicit() && !identity.extract(entity).equals(id)) {
-                throw new IllegalArgumentException("Supplied ID differs from the immutable IdentityDimension");
-            }
-            // Preparation MUST happen before touching existing state; an extractor failure is safe.
-            Object[] next = indexes.extract(entity);
-            indexes.validate(next);
-            applyEvictions();
-
-            IndexedEntry<T> entry = new IndexedEntry<>(entity, next);
-            IndexedEntry<T> previous = store.put(id, entry);
-            if (previous != null) indexes.remove(previous, previous.snapshot());
-            applyEvictions();
-            if (store.contains(id)) {
-                indexes.add(entry, next);
-            }
+            store(id, entity, suppliedOrNull);
         } finally {
             write.unlock();
+        }
+    }
+
+    private void store(ID id, T entity, SearchSpecification<T, ID> suppliedOrNull) {
+        if (suppliedOrNull != null) requireSameSpecification(suppliedOrNull);
+        if (!specification.type().isInstance(entity)) {
+            throw new IllegalArgumentException("Entity does not match " + specification.type());
+        }
+        IdentityDimension<T, ID> identity = specification.identity();
+        if (!identity.isExplicit() && !identity.extract(entity).equals(id)) {
+            throw new IllegalArgumentException("Supplied ID differs from the immutable IdentityDimension");
+        }
+        // Preparation MUST happen before touching existing state; an extractor failure is safe.
+        Object[] next = indexes.extract(entity);
+        indexes.validate(next);
+        applyEvictions();
+
+        IndexedEntry<T> entry = new IndexedEntry<>(entity, next);
+        IndexedEntry<T> previous = store.put(id, entry);
+        if (previous != null) indexes.remove(previous, previous.snapshot());
+        applyEvictions();
+        if (store.contains(id)) {
+            indexes.add(entry, next);
         }
     }
 
@@ -82,10 +97,12 @@ public final class TypeCache<T, ID> {
     }
 
     private T read(ID id, Class<?> view) {
-        if (view != specification.type()) {
-            IndexedEntry<T> found = store.peek(id);
-            if (found == null || !view.isInstance(found.entity())) return null;
+        if (view == type) {
+            IndexedEntry<T> entry = store.get(id);
+            return entry == null ? null : entry.entity();
         }
+        IndexedEntry<T> found = store.peek(id);
+        if (found == null || !view.isInstance(found.entity())) return null;
         IndexedEntry<T> entry = store.get(id);
         return entry == null || !view.isInstance(entry.entity()) ? null : entry.entity();
     }

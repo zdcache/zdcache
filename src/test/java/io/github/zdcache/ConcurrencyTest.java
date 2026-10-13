@@ -36,19 +36,23 @@ class ConcurrencyTest {
     }
 
     @Test void linkedHashMapStoreStaysConsistentUnderConcurrentUse() throws Exception {
-        hammer(IdentityStoreFactory.linkedHashMap());
+        hammer(ZDCache.builder().identityStore(IdentityStoreFactory.linkedHashMap()));
     }
 
     @Test void caffeineStoreStaysConsistentUnderConcurrentUseAndEviction() throws Exception {
-        hammer(IdentityStoreFactory.caffeine());
+        hammer(ZDCache.builder().identityStore(IdentityStoreFactory.caffeine()));
     }
 
     @Test void bufferedLruStoreStaysConsistentUnderConcurrentUseAndEviction() throws Exception {
-        hammer(IdentityStoreFactory.bufferedLru());
+        hammer(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()));
     }
 
-    private static void hammer(IdentityStoreFactory stores) throws Exception {
-        var cache = ZDCache.builder().defaultMaxPerType(CAPACITY).identityStore(stores).build();
+    @Test void approximateRecencyStaysConsistentUnderConcurrentUseAndEviction() throws Exception {
+        hammer(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).recency(Recency.APPROXIMATE));
+    }
+
+    private static void hammer(ZDCache.Builder builder) throws Exception {
+        var cache = builder.defaultMaxPerType(CAPACITY).build();
         cache.register(spec());
         var problem = new AtomicReference<Throwable>();
         var start = new CountDownLatch(1);

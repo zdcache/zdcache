@@ -1,9 +1,12 @@
 package io.github.zdcache.store;
 
+import io.github.zdcache.Recency;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -18,6 +21,7 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     private static final int STRIPE_MASK = STRIPE_CAPACITY - 1;
     private static final int DRAIN_THRESHOLD = STRIPE_CAPACITY / 2;
     private static final int WRITER_SPINS = 1_000;
+    private static final int MAX_STRIPES = 128;
 
     private static final class Node<ID, T> {
         final ID id;
@@ -54,20 +58,25 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     private final int maximumSize;
     private final ConcurrentHashMap<ID, Node<ID, T>> nodes = new ConcurrentHashMap<>();
     private final Node<ID, T> head = new Node<>(null, null);
-    private final Stripe[] stripes;
+    private final AtomicReferenceArray<Stripe> stripes;
     private final ReentrantLock lock = new ReentrantLock();
     private final AtomicInteger writersWaiting = new AtomicInteger();
     private final Queue<EvictedEntry<ID, T>> evictions = new ConcurrentLinkedQueue<>();
+    private final boolean approximate;
     private volatile int size;
 
     public IdentityStoreBufferedLru(int maximumSize) {
+        this(maximumSize, Recency.STRICT);
+    }
+
+    public IdentityStoreBufferedLru(int maximumSize, Recency recency) {
         if (maximumSize < 1) throw new IllegalArgumentException("maximumSize must be positive");
         this.maximumSize = maximumSize;
+        this.approximate = Objects.requireNonNull(recency) == Recency.APPROXIMATE;
         head.prev = head;
         head.next = head;
-        int processors = Math.min(64, Runtime.getRuntime().availableProcessors());
-        stripes = new Stripe[processors <= 1 ? 1 : Integer.highestOneBit(processors - 1) << 1];
-        for (int i = 0; i < stripes.length; i++) stripes[i] = new Stripe();
+        int wanted = Math.min(MAX_STRIPES, 4 * Runtime.getRuntime().availableProcessors());
+        stripes = new AtomicReferenceArray<>(wanted <= 1 ? 1 : Integer.highestOneBit(wanted - 1) << 1);
     }
 
     @Override public IndexedEntry<T> get(ID id) {
@@ -86,7 +95,8 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     @Override public IndexedEntry<T> put(ID id, IndexedEntry<T> entry) {
         lockAsWriter();
         try {
-            drain(stripes[stripeIndex()]);
+            Stripe own = stripes.get(stripeIndex());
+            if (own != null) drain(own);
             Node<ID, T> node = nodes.get(id);
             if (node != null) {
                 IndexedEntry<T> previous = node.entry;
@@ -185,9 +195,20 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
 
     @Override public boolean concurrent() { return true; }
 
+    @Override public boolean concurrentWrites() { return approximate; }
+
     private void recordAccess(Node<ID, T> node) {
-        Stripe stripe = stripes[stripeIndex()];
+        Stripe stripe = stripe();
         if (!stripe.offer(node)) {
+            if (approximate) {
+                if (writersWaiting.get() == 0 && lock.tryLock()) {
+                    try {
+                        drain(stripe);
+                        moveToMostRecent(node);
+                    } finally { lock.unlock(); }
+                }
+                return;
+            }
             while (writersWaiting.get() > 0) Thread.yield();
             lock.lock();
             try {
@@ -214,14 +235,25 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
         }
     }
 
+    private Stripe stripe() {
+        int index = stripeIndex();
+        Stripe stripe = stripes.get(index);
+        if (stripe != null) return stripe;
+        stripes.compareAndSet(index, null, new Stripe());
+        return stripes.get(index);
+    }
+
     private int stripeIndex() {
         long thread = Thread.currentThread().threadId();
         int hash = (int) (thread ^ (thread >>> 32)) * 0x9E3779B9;
-        return (hash ^ (hash >>> 16)) & (stripes.length - 1);
+        return (hash ^ (hash >>> 16)) & (stripes.length() - 1);
     }
 
     private void drainAll() {
-        for (Stripe stripe : stripes) drain(stripe);
+        for (int i = 0; i < stripes.length(); i++) {
+            Stripe stripe = stripes.get(i);
+            if (stripe != null) drain(stripe);
+        }
     }
 
     private void drain(Stripe stripe) {
