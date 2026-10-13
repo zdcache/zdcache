@@ -7,23 +7,39 @@ submitted; the cache does **not** track mutations to objects returned by referen
 This is a starting point for development and benchmarking, not a production-ready
 library. See the limitations below.
 
+## Installation
+
+```xml
+<dependency>
+    <groupId>io.github.zdcache</groupId>
+    <artifactId>zdcache</artifactId>
+    <version>0.1.0</version>
+</dependency>
+```
+
+```kotlin
+implementation("io.github.zdcache:zdcache:0.1.0")
+```
+
+zdcache has no runtime dependencies. To use `IdentityStoreFactory.caffeine()`, add
+`com.github.ben-manes.caffeine:caffeine` as well.
+
 ## Requirements and build
 
 - JDK 21+
-- Gradle 9.7.0 via `./gradlew` (Windows: `gradlew.bat`) or a locally installed Gradle
+- Gradle 9.3.0 via `./gradlew` (Windows: `gradlew.bat`) or a locally installed Gradle
 - Internet access on first build for Gradle and Maven Central dependencies
 
 ```sh
 ./gradlew test
-./gradlew jmh             # JMH benchmarks against Caffeine
+./gradlew jmh             # JMH benchmarks against Caffeine, cache2k, Guava and CQEngine
 ./gradlew footprint       # heap bytes per cached entry
 ./gradlew build
 ```
 
-**Wrapper note:** This generated ZIP does not contain the wrapper binary. The
-included `gradlew`/`gradlew.bat` scripts download the **official Gradle 9.7.0** wrapper
-JAR on first run and verify its SHA-256 before executing the Gradle wrapper.
-Alternatively, run `gradle test` with a locally installed Gradle.
+**Wrapper note:** The official Gradle 9.7.0 wrapper JAR is committed in `gradle/wrapper`.
+If it is missing, the included `gradlew`/`gradlew.bat` scripts download it and verify its
+SHA-256 before running it. Alternatively, run `gradle test` with a locally installed Gradle.
 
 ## Quick start
 
@@ -70,6 +86,24 @@ cache.updateSpecification(Person.class, nextSpec);
 var usingCaffeine = ZDCache.builder()
     .identityStore(IdentityStoreFactory.caffeine())
     .build();
+
+// The default buffered LRU store keeps strict LRU order; approximate recency trades
+// exact order under heavy contention for higher concurrent throughput:
+var forThroughput = ZDCache.builder()
+    .recency(Recency.APPROXIMATE)
+    .build();
+
+// Method references name dimensions and searches, so renames stay in sync:
+var byReference = SearchSpecification.builder(personId)
+    .prefix(Person::name)
+    .build();
+List<Person> named = cache.search(Person::name, "si");
+
+// Reads that do not count as use, and housekeeping:
+Person quiet = cache.peek(Person.class, 1L);
+boolean cached = cache.contains(Person.class, 2L);
+List<Person> everyone = cache.values(Person.class);
+cache.clear(Person.class);
 ```
 
 ## Basic/default specification
@@ -96,7 +130,7 @@ searchable type raises `UnknownSearchDimensionException`.
 
 ## Identity, specification and update rules
 
-- Each class has its own capacity, `ReentrantLock`, `IdentityStore`, specification,
+- Each class has its own capacity, `ReentrantReadWriteLock`, `IdentityStore`, specification,
   and indexes. Operations on different types are independent.
 - `put(entity, specification)` registers that spec on first use. Further inserts
   with a supplied spec must pass **the same specification object**. A different
@@ -110,17 +144,21 @@ searchable type raises `UnknownSearchDimensionException`.
 - Ordinary `put` replaces the entity and removes its old secondary index entries
   using captured index keys. This works even if the old entity was mutated by an
   outside holder. Ordinary changes by reference are not observed until `put()`.
-- `search` returns `List<T>` with unique root entities and internally resolves
-  indexed IDs via the identity store. Prefix indexing is case-insensitive using
+- `search` returns `List<T>` with unique root entities, read straight from the
+  stored entries the indexes reference. Prefix indexing is case-insensitive using
   `Locale.ROOT`, **starts-with**, not fuzzy matching or substring matching.
 - A single root can contribute multiple values to a nested-list dimension.
-  Per-node ID reference counts protect shared prefixes during removal.
-- Search accesses promote matching identity entries according to the store's
-  eviction policy; full specification reindex does not promote entries.
-- `IdentityStoreLinkedHashMap` is strict LRU. Caffeine has a frequency-aware
-  eviction policy: the two backends are not semantically identical in victim choice.
-- Caffeine adapter is limited to size eviction, direct-executor maintenance and
-  explicit `cleanUp()` while the type lock is held. Its eviction callback only
+  Each trie node holds the entries whose value ends there, so removing one root
+  leaves prefixes shared with other roots intact.
+- Searches, `peek`, `contains` and `values` do not count as use in the eviction
+  order; `get` does. A full specification reindex does not promote entries.
+- The default `IdentityStoreBufferedLru` and `IdentityStoreLinkedHashMap` are strict
+  LRU. `recency(Recency.APPROXIMATE)` lets the buffered store drop recency updates
+  under heavy contention and exceed capacity until its next maintenance. Caffeine has
+  a frequency-aware eviction policy, so its victim choice differs from LRU.
+- Caffeine adapter is limited to size eviction, with direct-executor maintenance
+  run by the calling thread, including lock-free reads, and an explicit `cleanUp()`
+  under the type lock when settling. Its eviction callback only
   queues index-cleanup work, and never takes an external lock.
 
 ## Benchmark
@@ -132,44 +170,48 @@ zdcache is compared with three key-value caches (Caffeine, cache2k and Guava) an
 > **Disclaimer:** these numbers were collected by running the benchmark on the author's development machine. Results vary with hardware, JVM, load and data shape, so treat them as an indication of gains and losses, not as guarantees. Run the benchmark on your own machine and data before deciding.
 
 <!-- benchmark-summary:start -->
-Measured 2026-10-13T13:28:26Z on Java 21.0.6 with 11 CPUs, 3 forks per benchmark, at 100,000 entries. Lower is better for time and memory; higher is better for operations per second.
+Measured 2026-10-13T20:34:54Z on Java 21.0.6 with 11 CPUs, 3 forks per benchmark, at 100,000 entries. Lower is better for time and memory; higher is better for operations per second.
 
 **Single thread and memory**
 
 | | get | put | Memory per entry |
 |---|---:|---:|---:|
-| zdcache | 28 ns | 84 ns | 123 B |
-| zdcache, 4 indexes | 42 ns | 2,638 ns | 424 B |
-| Caffeine | 40 ns | 125 ns | 109 B |
-| cache2k | 13 ns | 40 ns | 107 B |
-| Guava | 43 ns | 119 ns | 99 B |
-| CQEngine, 4 indexes | 380 ns | 4,458 ns | 769 B |
+| zdcache | 24 ns | 84 ns | 123 B |
+| zdcache, 4 indexes | 34 ns | 2,465 ns | 424 B |
+| zdcache, approximate recency | 24 ns | 89 ns | – |
+| zdcache, approximate, 4 indexes | 32 ns | 2,433 ns | – |
+| Caffeine | 30 ns | 111 ns | 109 B |
+| cache2k | 12 ns | 48 ns | 107 B |
+| Guava | 36 ns | 108 ns | 99 B |
+| CQEngine, 4 indexes | 336 ns | 4,319 ns | 769 B |
 
 **Concurrent, 8 threads (million operations per second)**
 
 | | Reads only | Mixed: reads | Mixed: writes |
 |---|---:|---:|---:|
-| zdcache | 33 | 11 | 0.60 |
-| zdcache, 4 indexes | 33 | 18 | 0.13 |
-| Caffeine | 84 | 47 | 6.5 |
-| cache2k | 179 | 79 | 6.6 |
-| Guava | 13 | 15 | 0.01 |
-| CQEngine, 4 indexes | 14 | 12 | 0.09 |
+| zdcache | 22 | 12 | 0.58 |
+| zdcache, 4 indexes | 31 | 20 | 0.14 |
+| zdcache, approximate recency | 59 | 22 | 2.9 |
+| zdcache, approximate, 4 indexes | 26 | 32 | 0.12 |
+| Caffeine | 103 | 50 | 6.8 |
+| cache2k | 178 | 82 | 6.9 |
+| Guava | 13 | 17 | 0.00 |
+| CQEngine, 4 indexes | 15 | 12 | 0.09 |
 
 **Search**
 
 | | Prefix | Exact | Compound | Range |
 |---|---:|---:|---:|---:|
-| zdcache, 4 indexes | 1.3 µs | 15 µs | 2.3 µs | 183 µs |
-| CQEngine, 4 indexes | 20 µs | 22 µs | 35 µs | 242 µs |
-| Caffeine (full scan) | 913 µs | 1,266 µs | 1,146 µs | 1,467 µs |
-| cache2k (full scan) | 1,966 µs | 2,414 µs | 2,642 µs | 3,222 µs |
-| Guava (full scan) | 2,537 µs | 3,101 µs | 2,895 µs | 2,733 µs |
+| zdcache, 4 indexes | 1.3 µs | 14 µs | 2.9 µs | 155 µs |
+| CQEngine, 4 indexes | 19 µs | 19 µs | 49 µs | 204 µs |
+| Caffeine (full scan) | 924 µs | 1,267 µs | 1,143 µs | 1,300 µs |
+| cache2k (full scan) | 2,225 µs | 2,691 µs | 2,694 µs | 2,402 µs |
+| Guava (full scan) | 2,496 µs | 3,142 µs | 3,184 µs | 3,014 µs |
 <!-- benchmark-summary:end -->
 
-How to read it: on one thread, zdcache's key lookup is in the same range as Caffeine and Guava, with cache2k the fastest, and keeping four indexes up to date costs about 2.6 µs per `put`. Searches through indexes are about 15× faster than CQEngine for prefix and compound queries, 1.3–1.5× for exact and range queries, and 8–2,000× faster than scanning a cache. Under concurrent load zdcache reads at about 40% of Caffeine's rate and a fifth of cache2k's while keeping strict LRU order; writes are where it lags most, at about a tenth of Caffeine's write throughput without indexes. Choose zdcache when you look cached objects up by more than their key; for key-only caching with many concurrent writes, Caffeine or cache2k fits better.
+How to read it: on one thread, zdcache's key lookup is as fast as Caffeine's or faster in both recency modes (24 ns for `get`, 84–89 ns for `put`), with cache2k the fastest, and keeping four indexes up to date costs about 2.4 µs per `put`. Searches through indexes are about 15× faster than CQEngine for prefix and compound queries, 1.3–1.4× for exact and range queries, and 8–2,000× faster than scanning a cache. Under concurrent load the default strict LRU store reads at 22 M/s in this run (about 40 M/s in other runs, depending on which reader threads share a read buffer) and writes at a tenth of Caffeine's rate. With `recency(Recency.APPROXIMATE)` zdcache reaches about 57% of Caffeine's read throughput and 43% of its write throughput, giving up exact LRU order under heavy contention. Choose zdcache when you look cached objects up by more than their key; for key-only caching with many concurrent writes, Caffeine or cache2k fits better.
 
-None of the benchmarks put the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts in LRU order per segment and zdcache in strict LRU order. CQEngine never evicts.
+None of the benchmarks put the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts in LRU order per segment and zdcache in strict LRU order by default. CQEngine never evicts.
 
 ### Running the benchmark
 
@@ -186,31 +228,33 @@ Only a full run can be published. `./benchmark -publish` copies the report to `d
 
 ## Current limitations and follow-up work
 
-1. **Not a transactional database.** Each public cache call is serialized per
-   type, but external mutation of object references is not synchronized by this
-   lock. Index keys from nested collections and properties should be stable
-   immutable values (strings, boxed numbers, dates, UUIDs, enums, etc.).
+1. **Not a transactional database.** Writes are serialized per type, except
+   key-only writes on stores with concurrent writes, but external mutation of
+   object references is not synchronized by this lock. Index keys from nested
+   collections and properties should be stable immutable values (strings, boxed
+   numbers, dates, UUIDs, enums, etc.).
 2. The implementation stages extraction/validation before ordinary `put`, but
    does not yet provide general rollback for unexpected exceptions (e.g. custom
    `hashCode` or `Comparable` throwing *during* an index mutation, or OOM).
-3. Each search uses an **exclusive type lock**, including ID resolution, so
-   benchmarking contention is important. This makes Caffeine simple to swap in
-   but does not exploit its concurrent reads. No cross-type atomic operations.
+3. Searches share a per-type read lock and `get` takes no type lock, but writes take
+   that lock exclusively, so concurrent writes to one type are serialized. Key-only
+   types on stores with concurrent writes (approximate recency, Caffeine) are the
+   exception. No cross-type atomic operations.
 4. `SearchSpecification` can traverse nested lists of properties. Intersections,
    fuzzy text, ranked similarity, geospatial indexing, sorting, pagination,
    expiration, metrics, and persistence are not yet implemented.
 5. Empty-string prefix searches match all indexed names; prefix searches are
-   **not** typo-tolerant. Collection indexes do not preserve per-element join
-   context needed for "both conditions on the same nested child" queries.
+   **not** typo-tolerant. Separate collection dimensions do not preserve
+   per-element join context; declare a `compound` inside `each` for "both
+   conditions on the same nested child" queries.
 6. Cache size limits count root entities **per type**; index memory is not
    independently bounded. Many long strings/large nested lists can consume
    much more memory than the identity store itself.
 7. Cache values can be records or mutable POJOs, but callers own their mutation
    discipline. A `get()` or `search()` can return a reference whose properties
    have changed since it was indexed.
-8. Caffeine tests need the real library resolved by Gradle. The creation
-   environment could compile against local API stand-ins but could not run the
-   actual Gradle build; run `./gradlew test` in your environment.
+8. Caffeine is an optional dependency: add `com.github.ben-manes.caffeine:caffeine`
+   yourself to use `IdentityStoreFactory.caffeine()`.
 
 ## Project map
 
@@ -224,12 +268,11 @@ src/main/java/io/github/zdcache/
   internal/DimensionRegistry.java  # per-type indexes and snapshots
   index/                           # prefix Trie, exact HashMap, range TreeMap
   store/IdentityStore.java         # storage SPI
+  store/IdentityStoreBufferedLru.java  # default store
   store/IdentityStoreLinkedHashMap.java
   store/IdentityStoreCaffeine.java
 src/test/java/io/github/zdcache/ZDCacheTest.java
 ```
 
-For trustworthy performance comparisons, add **JMH** measurements with warm-up,
-allocation profiling, varied query cardinality, eviction pressure and concurrent
-PUT/search workloads. `./gradlew jmh` runs the JMH benchmarks against Caffeine and
-`./gradlew footprint` measures heap bytes per entry.
+JMH benchmarks and memory measurements live in `src/jmh`; see [Benchmark](#benchmark)
+for how to run and publish them. They do not yet cover eviction pressure.
