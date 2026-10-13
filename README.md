@@ -15,7 +15,8 @@ library. See the limitations below.
 
 ```sh
 ./gradlew test
-./gradlew compareStores   # simple smoke comparison, NOT JMH
+./gradlew jmh             # JMH benchmarks against Caffeine
+./gradlew footprint       # heap bytes per cached entry
 ./gradlew build
 ```
 
@@ -122,6 +123,33 @@ searchable type raises `UnknownSearchDimensionException`.
   explicit `cleanUp()` while the type lock is held. Its eviction callback only
   queues index-cleanup work, and never takes an external lock.
 
+## Benchmark
+
+zdcache is compared with three key-value caches (Caffeine, cache2k and Guava) and with CQEngine, an indexed in-memory collection. JMH measures single-threaded `get` and `put`, eight threads reading and writing concurrently, and prefix, exact, compound and range searches at 10,000 and 100,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
+
+**[Open the full interactive report](https://zdcache.github.io/zdcache/benchmark/)** for every library and every zdcache identity store, with confidence intervals and a table view.
+
+> **Disclaimer:** these numbers were collected by running the benchmark on the author's development machine. Results vary with hardware, JVM, load and data shape, so treat them as an indication of gains and losses, not as guarantees. Run the benchmark on your own machine and data before deciding.
+
+<!-- benchmark-summary:start -->
+Not published yet: run `./benchmark -full`, then `./benchmark -publish`.
+<!-- benchmark-summary:end -->
+
+None of the benchmarks put the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts in LRU order per segment and zdcache in strict LRU order. CQEngine never evicts.
+
+### Running the benchmark
+
+```bash
+./benchmark -full                  # every JMH benchmark with 3 forks, plus memory footprint (about an hour)
+./benchmark -quick                 # every JMH benchmark with 1 fork and short iterations
+./benchmark -jmh "SearchBenchmark -f 1 -p subject=zdcache-buffered-indexed,cqengine"   # custom JMH options
+./benchmark -publish               # publish the last full run
+```
+
+Results print to the terminal and are written to `build/reports/zdcache-benchmark/index.html`. The normal `./gradlew build` does not run the benchmark.
+
+Only a full run can be published. `./benchmark -publish` copies the report to `docs/benchmark/index.html`, which GitHub Pages serves, and refreshes the summary tables above; after a quick or custom run it refuses and asks for a full run.
+
 ## Current limitations and follow-up work
 
 1. **Not a transactional database.** Each public cache call is serialized per
@@ -164,11 +192,10 @@ src/main/java/io/github/zdcache/
   store/IdentityStore.java         # storage SPI
   store/IdentityStoreLinkedHashMap.java
   store/IdentityStoreCaffeine.java
-  benchmark/StoreComparison.java   # simple smoke comparison
 src/test/java/io/github/zdcache/ZDCacheTest.java
 ```
 
 For trustworthy performance comparisons, add **JMH** measurements with warm-up,
 allocation profiling, varied query cardinality, eviction pressure and concurrent
-PUT/search workloads. The included `compareStores` task is only an executable
-smoke check, not an evidence-quality benchmark.
+PUT/search workloads. `./gradlew jmh` runs the JMH benchmarks against Caffeine and
+`./gradlew footprint` measures heap bytes per entry.

@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZDCache benchmark</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --baseline: #c3c2b7;
+    --other: #898781;
+    --border: rgba(11, 11, 11, 0.10);
+    --control: rgba(11, 11, 11, 0.06);
+    --series-1: #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface-1: #1a1a19;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --baseline: #383835;
+      --other: #898781;
+      --border: rgba(255, 255, 255, 0.10);
+      --control: rgba(255, 255, 255, 0.08);
+      --series-1: #3987e5;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --baseline: #383835;
+    --other: #898781;
+    --border: rgba(255, 255, 255, 0.10);
+    --control: rgba(255, 255, 255, 0.08);
+    --series-1: #3987e5;
+  }
+
+  body { margin: 0; }
+  .viz-root {
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 32px;
+    min-height: 100vh;
+    box-sizing: border-box;
+  }
+  .back { margin: 0 0 12px; font-size: 13px; }
+  .back a { color: var(--text-secondary); text-decoration: none; }
+  .back a:hover { color: var(--text-primary); }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 14px; margin: 0 0 16px; max-width: 960px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; margin: 0 0 8px; font-size: 13px; color: var(--text-secondary); }
+  .filter { display: flex; align-items: center; gap: 10px; }
+  .segmented { display: inline-flex; background: var(--control); border-radius: 8px; padding: 2px; gap: 2px; }
+  .segmented button {
+    font: inherit; font-size: 13px; color: var(--text-secondary); background: transparent;
+    border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
+  }
+  .segmented button[aria-pressed="true"] { background: var(--surface-1); color: var(--text-primary); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+  .segmented button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+  .key { display: flex; gap: 16px; margin: 4px 0 8px; padding: 0; list-style: none; font-size: 12px; color: var(--text-secondary); }
+  .key li { display: flex; align-items: center; gap: 6px; }
+  .key .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  section.part > h2 { font-size: 18px; font-weight: 600; margin: 24px 0 2px; }
+  section.part > p { font-size: 13px; color: var(--text-secondary); margin: 0 0 12px; max-width: 960px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 16px 8px; min-width: 0; }
+  .card h3 { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
+  .card .direction { font-size: 12px; color: var(--text-muted); margin: 0 0 6px; }
+  svg { display: block; overflow: visible; }
+  svg:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; border-radius: 4px; }
+  .tick { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .axis-title { fill: var(--text-muted); font-size: 11px; }
+  .row-label { fill: var(--text-secondary); font-size: 12px; }
+  .row-label.highlight { fill: var(--text-primary); font-weight: 600; }
+  .value-label { fill: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .tooltip {
+    position: fixed; pointer-events: none; z-index: 10; display: none;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    padding: 8px 10px; font-size: 12px; min-width: 200px;
+  }
+  .tooltip .heading { color: var(--text-secondary); margin-bottom: 4px; }
+  .tooltip .value { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tooltip .detail { color: var(--text-muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+  table { border-collapse: collapse; margin-top: 8px; font-size: 12px; font-variant-numeric: tabular-nums; background: var(--surface-1); }
+  th, td { border-bottom: 1px solid var(--grid); padding: 5px 10px; text-align: right; }
+  th { color: var(--text-secondary); font-weight: 600; }
+  td:first-child, th:first-child { text-align: left; }
+  .note { font-size: 12px; color: var(--text-muted); margin-top: 28px; max-width: 960px; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <p class="back"><a href="../">← ZDCache</a></p>
+  <h1>ZDCache benchmark</h1>
+  <p class="subtitle" id="subtitle"></p>
+  <div class="filters">
+    <div class="filter"><span>Compare</span><div class="segmented" id="views" role="group" aria-label="Compare"></div></div>
+    <div class="filter"><span>Entries</span><div class="segmented" id="sizes" role="group" aria-label="Entries"></div></div>
+  </div>
+  <ul class="key" id="key"></ul>
+  <div id="page"></div>
+  <p class="note" id="note"></p>
+  <div class="tooltip" id="tooltip" role="status" aria-live="polite"></div>
+</div>
+<script>
+const DATA = /*BENCHMARK_DATA*/null;
+
+const VIEWS = [
+  { key: "libraries", name: "Libraries", highlightName: "zdcache", otherName: "Other libraries",
+    subtitle: "zdcache with its default buffered LRU store, compared with Caffeine, cache2k, Guava and CQEngine. "
+      + "Every chart uses a log scale, because the libraries differ by up to three orders of magnitude.",
+    rows: [
+      { subject: "zdcache-buffered-keys", label: "zdcache", highlight: true },
+      { subject: "zdcache-buffered-indexed", label: "zdcache, 4 indexes", highlight: true },
+      { subject: "caffeine", label: "Caffeine", scan: true },
+      { subject: "cache2k", label: "cache2k", scan: true },
+      { subject: "guava", label: "Guava", scan: true },
+      { subject: "cqengine", label: "CQEngine, 4 indexes" },
+    ] },
+  { key: "stores", name: "zdcache stores", highlightName: "Default store", otherName: "Other stores",
+    subtitle: "zdcache with each of its identity stores: the default buffered LRU store, the LinkedHashMap store and "
+      + "the Caffeine store, with and without indexes. Every chart uses a log scale.",
+    rows: [
+      { subject: "zdcache-buffered-keys", label: "Buffered LRU (default)", highlight: true },
+      { subject: "zdcache-buffered-indexed", label: "Buffered LRU, 4 indexes", highlight: true },
+      { subject: "zdcache-lhm-keys", label: "LinkedHashMap" },
+      { subject: "zdcache-lhm-indexed", label: "LinkedHashMap, 4 indexes" },
+      { subject: "zdcache-lhm-indexed-lambda", label: "LinkedHashMap, 4 indexes, lambdas" },
+      { subject: "zdcache-caffeine-keys", label: "Caffeine store" },
+      { subject: "zdcache-caffeine-indexed", label: "Caffeine store, 4 indexes" },
+    ] },
+];
+
+const PARTS = [
+  { title: "Key lookup", sized: true,
+    text: "One thread getting and putting entries by key. Every key is present, so there is no eviction pressure.",
+    charts: [
+      { title: "get", benchmark: "KeyLookupBenchmark.get", lowerIsBetter: true },
+      { title: "put", benchmark: "KeyLookupBenchmark.put", lowerIsBetter: true },
+    ] },
+  { title: "Search", sized: true,
+    text: "Finding every entry matching a query. Caches without indexes have to scan all entries. "
+      + "Exact matches about 2% of the entries, range about 16%.",
+    charts: [
+      { title: "Prefix on name", benchmark: "SearchBenchmark.prefixName", lowerIsBetter: true },
+      { title: "Exact city", benchmark: "SearchBenchmark.exactCity", lowerIsBetter: true },
+      { title: "Compound: exact city and age range", benchmark: "SearchBenchmark.compoundCityAge", lowerIsBetter: true },
+      { title: "Age range", benchmark: "SearchBenchmark.rangeAge", lowerIsBetter: true },
+    ] },
+  { title: "Concurrent", sized: false,
+    text: "Eight threads at 100,000 entries: all reading, or six reading while two write.",
+    charts: [
+      { title: "Reads only", benchmark: "ConcurrentBenchmark.readOnly", lowerIsBetter: false },
+      { title: "Mixed: reads", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedRead", lowerIsBetter: false },
+      { title: "Mixed: writes", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedWrite", lowerIsBetter: false },
+    ] },
+  { title: "Memory", sized: true,
+    text: "Heap bytes per cached entry, measured with JOL, excluding the cached objects themselves.",
+    charts: [
+      { title: "Bytes per entry", footprint: true, lowerIsBetter: true },
+    ] },
+];
+
+const SIZES = [...new Set(DATA.results.map(r => r.size).concat(DATA.footprint.map(f => f.size)))]
+  .filter(size => size > 0).sort((a, b) => a - b).map(size => ({ size, label: size.toLocaleString("en-US") }));
+const LARGEST = SIZES.length ? SIZES[SIZES.length - 1].size : 0;
+
+let activeView = VIEWS[0];
+let activeSize = SIZES[SIZES.length - 1];
+const openTables = new Set();
+
+const UNITS = { "ns/op": "ns", "us/op": "µs", "ms/op": "ms", "ops/us": "M ops/s", "bytes": "B" };
+
+function estimate(chart, subject, size) {
+  if (chart.footprint) {
+    const entry = DATA.footprint.find(f => f.subject === subject && f.size === size);
+    return entry ? { score: entry.bytesPerEntry, error: null, unit: "bytes" } : null;
+  }
+  const result = DATA.results.find(r => r.benchmark === chart.benchmark && r.subject === subject && r.size === size);
+  if (!result) return null;
+  const metric = chart.metric ? result.secondary[chart.metric] : result.primary;
+  return metric ? { score: metric.score, error: metric.error, unit: result.unit } : null;
+}
+
+function sizeFor(part) {
+  return part.sized ? activeSize.size : LARGEST;
+}
+
+function rowsFor(chart, part, size) {
+  return activeView.rows
+    .map(row => ({ row, value: estimate(chart, row.subject, size) }))
+    .filter(entry => entry.value && entry.value.score > 0)
+    .map(entry => ({ ...entry, label: part.title === "Search" && entry.row.scan ? entry.row.label + " (full scan)" : entry.row.label }));
+}
+
+function format(value, unit) {
+  const suffix = UNITS[unit] ?? unit;
+  if (unit === "bytes") return Math.round(value).toLocaleString("en-US") + " " + suffix;
+  const digits = value < 1 ? 2 : value < 10 ? 1 : 0;
+  return value.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }) + " " + suffix;
+}
+
+const SVG = "http://www.w3.org/2000/svg";
+function el(name, attributes = {}, parent) {
+  const node = document.createElementNS(SVG, name);
+  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+  if (parent) parent.appendChild(node);
+  return node;
+}
+
+const NICE = [1, 2, 5];
+
+function niceBelow(value) {
+  const exponent = Math.floor(Math.log10(value));
+  const factor = [...NICE].reverse().find(f => f * 10 ** exponent <= value) ?? 1;
+  return factor * 10 ** exponent;
+}
+
+function niceAbove(value) {
+  const exponent = Math.floor(Math.log10(value));
+  const factor = NICE.find(f => f * 10 ** exponent >= value);
+  return factor ? factor * 10 ** exponent : 10 ** (exponent + 1);
+}
+
+function logDomain(chart, part) {
+  const sizes = part.sized ? SIZES.map(s => s.size) : [LARGEST];
+  const values = sizes.flatMap(size => rowsFor(chart, part, size).flatMap(({ value }) => {
+    const error = value.error ?? 0;
+    return [value.score, value.score + error, value.score - error > 0 ? value.score - error : value.score];
+  }));
+  const low = Math.log10(niceBelow(Math.min(...values) * 0.9));
+  const high = Math.log10(niceAbove(Math.max(...values) * 1.1));
+  return { low, high: high - low < 0.3 ? low + 1 : high };
+}
+
+function ticksFor(domain) {
+  const decades = domain.high - domain.low;
+  const factors = decades <= 2 ? NICE : [1];
+  const ticks = [];
+  for (let exponent = Math.floor(domain.low); exponent <= Math.ceil(domain.high); exponent++) {
+    for (const factor of factors) {
+      const value = factor * 10 ** exponent;
+      const position = Math.log10(value);
+      if (position >= domain.low - 1e-9 && position <= domain.high + 1e-9) ticks.push(value);
+    }
+  }
+  return ticks;
+}
+
+const tickLabel = value => value >= 1e6 ? (value / 1e6) + "M" : value >= 1e3 ? (value / 1e3) + "k" : String(+value.toPrecision(3));
+
+const tooltip = document.getElementById("tooltip");
+function showTooltip(anchor, chart, entry, size) {
+  tooltip.replaceChildren();
+  const heading = document.createElement("div");
+  heading.className = "heading";
+  heading.textContent = `${entry.label} · ${chart.title} · ${size.toLocaleString("en-US")} entries`;
+  const value = document.createElement("div");
+  value.className = "value";
+  value.textContent = format(entry.value.score, entry.value.unit);
+  tooltip.append(heading, value);
+  if (entry.value.error != null) {
+    const error = document.createElement("div");
+    error.className = "detail";
+    error.textContent = `± ${format(entry.value.error, entry.value.unit)} (99.9% confidence interval)`;
+    tooltip.appendChild(error);
+  }
+  const direction = document.createElement("div");
+  direction.className = "detail";
+  direction.textContent = chart.lowerIsBetter ? "Lower is better" : "Higher is better";
+  tooltip.appendChild(direction);
+  tooltip.style.display = "block";
+  const box = tooltip.getBoundingClientRect();
+  const left = anchor.x + 16 + box.width > window.innerWidth ? anchor.x - box.width - 16 : anchor.x + 16;
+  tooltip.style.left = Math.max(8, left) + "px";
+  tooltip.style.top = Math.max(8, Math.min(window.innerHeight - box.height - 8, anchor.y - box.height / 2)) + "px";
+}
+const hideTooltip = () => { tooltip.style.display = "none"; };
+
+function drawChart(card, chart, part) {
+  const size = sizeFor(part);
+  const entries = rowsFor(chart, part, size);
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "direction";
+    empty.textContent = "Not measured in this run.";
+    card.appendChild(empty);
+    return;
+  }
+  const domain = logDomain(chart, part);
+  const rowHeight = 28;
+  const labelWidth = Math.max(120, Math.ceil(Math.max(...entries.map(entry => entry.label.length)) * 6.9) + 20);
+  const margin = { top: 6, right: 84, bottom: 40, left: labelWidth };
+  const width = Math.max(380, card.clientWidth - 32);
+  const plotWidth = width - margin.left - margin.right;
+  const height = margin.top + entries.length * rowHeight + margin.bottom;
+  const x = v => margin.left + (Math.log10(v) - domain.low) / (domain.high - domain.low) * plotWidth;
+  const yOf = index => margin.top + index * rowHeight + rowHeight / 2;
+  const unit = entries[0].value.unit;
+
+  const svg = el("svg", { width, height, viewBox: `0 0 ${width} ${height}`, tabindex: 0, role: "img",
+    "aria-label": `${chart.title}, ${size.toLocaleString("en-US")} entries, ${chart.lowerIsBetter ? "lower" : "higher"} is better. `
+      + "Use the up and down arrow keys to read each row." }, card);
+
+  for (const tick of ticksFor(domain)) {
+    el("line", { x1: x(tick), x2: x(tick), y1: margin.top, y2: height - margin.bottom, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    el("text", { x: x(tick), y: height - margin.bottom + 16, "text-anchor": "middle", class: "tick" }, svg).textContent = tickLabel(tick);
+  }
+  el("text", { x: margin.left + plotWidth / 2, y: height - 6, "text-anchor": "middle", class: "axis-title" }, svg)
+    .textContent = `${UNITS[unit] ?? unit} (log scale)`;
+
+  const marker = el("rect", { x: 0, width, height: rowHeight, fill: "var(--control)", visibility: "hidden", rx: 6 }, svg);
+
+  entries.forEach((entry, index) => {
+    const y = yOf(index);
+    const color = entry.row.highlight ? "var(--series-1)" : "var(--other)";
+    el("text", { x: margin.left - 12, y: y + 4, "text-anchor": "end", class: "row-label" + (entry.row.highlight ? " highlight" : "") }, svg)
+      .textContent = entry.label;
+    el("line", { x1: margin.left, x2: x(entry.value.score), y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    const { score, error } = entry.value;
+    if (error != null && error > 0) {
+      const lowEnd = Math.max(score - error, 10 ** domain.low);
+      el("line", { x1: x(lowEnd), x2: x(score + error), y1: y, y2: y, stroke: color, "stroke-width": 2, "stroke-linecap": "round", opacity: 0.45 }, svg);
+    }
+    el("circle", { cx: x(score), cy: y, r: 5, fill: color, stroke: "var(--surface-1)", "stroke-width": 2 }, svg);
+    el("text", { x: Math.max(x(score), x(score + (error ?? 0))) + 10, y: y + 4, class: "value-label" }, svg)
+      .textContent = format(score, unit);
+  });
+
+  let active = -1;
+  function select(index) {
+    active = index;
+    marker.setAttribute("y", yOf(index) - rowHeight / 2);
+    marker.setAttribute("visibility", "visible");
+    const box = svg.getBoundingClientRect();
+    showTooltip({ x: box.left + x(entries[index].value.score), y: box.top + yOf(index) }, chart, entries[index], size);
+  }
+  function clear() {
+    active = -1;
+    marker.setAttribute("visibility", "hidden");
+    hideTooltip();
+  }
+  const hit = el("rect", { x: 0, y: margin.top, width, height: entries.length * rowHeight, fill: "transparent" }, svg);
+  hit.addEventListener("pointermove", event => {
+    const index = Math.floor((event.clientY - svg.getBoundingClientRect().top - margin.top) / rowHeight);
+    if (index >= 0 && index < entries.length && index !== active) select(index);
+  });
+  hit.addEventListener("pointerleave", clear);
+  svg.addEventListener("keydown", event => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    const start = active < 0 ? (step > 0 ? -1 : entries.length) : active;
+    select(Math.min(entries.length - 1, Math.max(0, start + step)));
+  });
+  svg.addEventListener("blur", clear);
+}
+
+function partTable(part) {
+  const size = sizeFor(part);
+  const node = document.createElement("table");
+  const head = node.createTHead().insertRow();
+  for (const heading of ["", ...part.charts.map(chart => chart.title)]) {
+    const cell = document.createElement("th");
+    cell.textContent = heading;
+    head.appendChild(cell);
+  }
+  const body = node.createTBody();
+  for (const row of activeView.rows) {
+    const values = part.charts.map(chart => estimate(chart, row.subject, size));
+    if (values.every(value => !value)) continue;
+    const tr = body.insertRow();
+    tr.insertCell().textContent = part.title === "Search" && row.scan ? row.label + " (full scan)" : row.label;
+    for (const value of values) {
+      tr.insertCell().textContent = !value ? "–"
+        : format(value.score, value.unit) + (value.error != null ? " ± " + format(value.error, value.unit) : "");
+    }
+  }
+  return node;
+}
+
+function renderPage() {
+  const container = document.getElementById("page");
+  container.querySelectorAll("details").forEach(details => {
+    if (details.open) openTables.add(details.dataset.part); else openTables.delete(details.dataset.part);
+  });
+  container.replaceChildren();
+  document.getElementById("subtitle").textContent = activeView.subtitle;
+  const key = document.getElementById("key");
+  key.replaceChildren();
+  for (const [name, color] of [[activeView.highlightName, "var(--series-1)"], [activeView.otherName, "var(--other)"]]) {
+    const item = document.createElement("li");
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.style.background = color;
+    const label = document.createElement("span");
+    label.textContent = name;
+    item.append(dot, label);
+    key.appendChild(item);
+  }
+
+  const draws = [];
+  for (const part of PARTS) {
+    const section = document.createElement("section");
+    section.className = "part";
+    const heading = document.createElement("h2");
+    heading.textContent = part.sized ? `${part.title}, ${activeSize.label} entries` : part.title;
+    const text = document.createElement("p");
+    text.textContent = part.text;
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    section.append(heading, text, grid);
+    for (const chart of part.charts) {
+      const card = document.createElement("section");
+      card.className = "card";
+      const title = document.createElement("h3");
+      title.textContent = chart.title;
+      const direction = document.createElement("p");
+      direction.className = "direction";
+      direction.textContent = chart.lowerIsBetter ? "Lower is better" : "Higher is better";
+      card.append(title, direction);
+      grid.appendChild(card);
+      draws.push(() => drawChart(card, chart, part));
+    }
+    const details = document.createElement("details");
+    details.dataset.part = part.title;
+    details.open = openTables.has(part.title);
+    const summary = document.createElement("summary");
+    summary.textContent = "Table view";
+    details.append(summary, partTable(part));
+    section.appendChild(details);
+    container.appendChild(section);
+  }
+  draws.forEach(draw => draw());
+}
+
+function segmented(containerId, options, label, isActive, onSelect) {
+  const group = document.getElementById(containerId);
+  const buttons = options.map(option => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label(option);
+    button.setAttribute("aria-pressed", String(isActive(option)));
+    button.addEventListener("click", () => {
+      buttons.forEach(other => other.setAttribute("aria-pressed", String(other === button)));
+      onSelect(option);
+      if (containerId === "views") history.replaceState(null, "", "#" + option.key);
+      renderPage();
+    });
+    group.appendChild(button);
+    return button;
+  });
+}
+
+const fromHash = VIEWS.find(view => "#" + view.key === window.location.hash);
+if (fromHash) activeView = fromHash;
+segmented("views", VIEWS, view => view.name, view => view === activeView, view => { activeView = view; });
+segmented("sizes", SIZES, size => size.label, size => size === activeSize, size => { activeSize = size; });
+renderPage();
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(renderPage, 150);
+});
+document.getElementById("note").textContent =
+  (DATA.mode !== "full" ? `This is a ${DATA.mode} run, not a full run. ` : "")
+  + `Run ${DATA.generatedAt} on Java ${DATA.javaVersion} with ${DATA.cpuCount} CPUs, ${DATA.forks} JMH `
+  + `${DATA.forks === 1 ? "fork" : "forks"} per measurement. Times are JMH averages per operation and throughput is `
+  + "operations per microsecond (million per second); whiskers show JMH's 99.9% confidence interval. "
+  + "No benchmark puts the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts "
+  + "in LRU order per segment and zdcache in strict LRU order. Guava gets 5% extra capacity so its per-segment limits "
+  + "do not evict entries early. CQEngine never evicts, plans the compound query over separate hash and navigable "
+  + "indexes, and has its writes serialized with a lock. These numbers come from the author's development machine; "
+  + "results vary with hardware, JVM, load and data shape.";
+</script>
+</body>
+</html>

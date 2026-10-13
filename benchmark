@@ -1,0 +1,41 @@
+#!/usr/bin/env sh
+set -e
+cd "$(dirname "$0")"
+
+usage() {
+    cat <<'USAGE'
+Usage:
+  ./benchmark -full                 Full run: every JMH benchmark with 3 forks, plus memory footprint (about an hour)
+  ./benchmark -quick                Quick run: every JMH benchmark with 1 fork and short iterations, plus memory footprint
+  ./benchmark -jmh "<JMH options>"  Custom run, e.g. ./benchmark -jmh "SearchBenchmark -f 1 -p subject=zdcache-buffered-indexed,cqengine"
+  ./benchmark -publish              Publish the last run to docs/benchmark and the README (full runs only)
+
+The report is written to build/reports/zdcache-benchmark/index.html.
+USAGE
+    exit "$1"
+}
+
+case "$1" in
+    -full)
+        [ "$#" -eq 1 ] || usage 1
+        exec ./gradlew jmh footprint benchmarkReport -Pjmh.args="-f 3" -Pbenchmark.mode=full
+        ;;
+    -quick)
+        [ "$#" -eq 1 ] || usage 1
+        exec ./gradlew jmh footprint benchmarkReport -Pjmh.args="-f 1 -wi 2 -i 3" -Pbenchmark.mode=quick
+        ;;
+    -jmh)
+        [ "$#" -eq 2 ] || usage 1
+        exec ./gradlew jmh footprint benchmarkReport -Pjmh.args="$2" -Pbenchmark.mode=custom
+        ;;
+    -publish)
+        [ "$#" -eq 1 ] || usage 1
+        exec ./gradlew publishBenchmarkReport
+        ;;
+    -h | --help)
+        usage 0
+        ;;
+    *)
+        usage 1
+        ;;
+esac
