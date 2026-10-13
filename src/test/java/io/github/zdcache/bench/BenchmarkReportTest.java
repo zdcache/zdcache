@@ -11,7 +11,8 @@ class BenchmarkReportTest {
             "benchmark": "io.github.zdcache.bench.KeyLookupBenchmark.get",
             "jdkVersion": "21.0.6", "forks": 3,
             "params": {"size": "100000", "subject": "zdcache-buffered-keys"},
-            "primaryMetric": {"score": 27.73, "scoreError": 1.8, "scoreUnit": "ns/op"},
+            "primaryMetric": {"score": 27.73, "scoreError": 1.8, "scoreUnit": "ns/op",
+              "rawData": [[26.0, 28.0], [60.0, 62.0], [27.0, 29.0]]},
             "secondaryMetrics": {}
           },
           {
@@ -28,7 +29,7 @@ class BenchmarkReportTest {
             "primaryMetric": {"score": 63.5, "scoreError": 5.5, "scoreUnit": "ops/us"},
             "secondaryMetrics": {
               "mixedRead": {"score": 56.25, "scoreError": 5.1, "scoreUnit": "ops/us"},
-              "mixedWrite": {"score": 0.553, "scoreError": 0.07, "scoreUnit": "ops/us"}
+              "mixedWrite": {"score": 0.553, "scoreError": 0.07, "scoreUnit": "ops/us", "rawData": [[0.5, 0.6]]}
             }
           },
           {
@@ -55,16 +56,17 @@ class BenchmarkReportTest {
         var run = run();
 
         assertEquals("21.0.6", run.javaVersion());
-        assertEquals(3, run.forks());
+        assertEquals(3, run.minForks());
+        assertEquals(3, run.maxForks());
         assertEquals(4, run.results().size());
         var get = run.results().getFirst();
         assertEquals("KeyLookupBenchmark.get", get.benchmark());
         assertEquals("zdcache-buffered-keys", get.subject());
         assertEquals(100_000, get.size());
         assertEquals("ns/op", get.unit());
-        assertEquals(new BenchmarkReport.Estimate(27.73, 1.8), get.primary());
-        assertTrue(Double.isNaN(run.results().get(1).primary().error()));
-        assertEquals(new BenchmarkReport.Estimate(0.553, 0.07), run.results().get(2).secondary().get("mixedWrite"));
+        assertEquals(new BenchmarkReport.Estimate(28.0, 27.0, 61.0), get.primary());
+        assertEquals(new BenchmarkReport.Estimate(1488.6, 1488.6, 1488.6), run.results().get(1).primary());
+        assertEquals(new BenchmarkReport.Estimate(0.55, 0.55, 0.55), run.results().get(2).secondary().get("mixedWrite"));
     }
 
     @Test void readsFootprintEntries() {
@@ -92,7 +94,7 @@ class BenchmarkReportTest {
     }
 
     @Test void reportEmbedsTheRunAndEscapesClosingTags() {
-        var run = new BenchmarkReport.Run("quick", "</script>", "21", 4, 1, List.of(), List.of());
+        var run = new BenchmarkReport.Run("quick", "</script>", "21", 4, 1, 1, List.of(), List.of());
 
         String html = BenchmarkReport.html(run, "<script>const DATA = " + BenchmarkReport.PLACEHOLDER + ";</script>");
 
@@ -109,6 +111,32 @@ class BenchmarkReportTest {
     @Test void missingErrorsAreWrittenAsNull() {
         String html = BenchmarkReport.html(run(), BenchmarkReport.PLACEHOLDER);
 
-        assertTrue(html.contains("\"score\":1488.6,\"error\":null"));
+        assertTrue(html.contains("\"score\":1488.6,\"low\":null,\"high\":null"));
+        assertTrue(html.contains("\"score\":28.0,\"low\":27.0,\"high\":61.0"));
+    }
+
+    @Test void forksAreShownAsARangeWhenBenchmarksDiffer() {
+        var mixed = new BenchmarkReport.Run("full", "t", "21", 4, 2, 3, List.of(), List.of());
+        var same = new BenchmarkReport.Run("full", "t", "21", 4, 3, 3, List.of(), List.of());
+        var single = new BenchmarkReport.Run("full", "t", "21", 4, 1, 1, List.of(), List.of());
+
+        assertEquals("2–3 forks", BenchmarkReport.forks(mixed));
+        assertEquals("3 forks", BenchmarkReport.forks(same));
+        assertEquals("1 fork", BenchmarkReport.forks(single));
+    }
+
+    @Test void summaryUsesTheLargestMeasuredSize() {
+        String json = JMH.replace("\"size\": \"100000\", \"subject\": \"zdcache-buffered-keys\"", "\"size\": \"250000\", \"subject\": \"zdcache-buffered-keys\"");
+        var run = BenchmarkReport.read(json, List.of(), "full", "t", 4);
+
+        assertEquals(250_000, BenchmarkReport.summarySize(run));
+        assertTrue(BenchmarkReport.summary(run).contains("at 250,000 entries"));
+    }
+
+    @Test void anEvenNumberOfForksTakesTheMiddleTwo() throws Exception {
+        var metric = new com.fasterxml.jackson.databind.ObjectMapper()
+            .readTree("{\"score\": 9, \"rawData\": [[10.0], [20.0], [40.0], [400.0]]}");
+
+        assertEquals(new BenchmarkReport.Estimate(30.0, 10.0, 400.0), BenchmarkReport.estimate(metric));
     }
 }

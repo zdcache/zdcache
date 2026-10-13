@@ -21,12 +21,11 @@ import java.util.function.Function;
 
 public final class BenchmarkReport {
     static final String PLACEHOLDER = "/*BENCHMARK_DATA*/null";
-    static final int SUMMARY_SIZE = 100_000;
 
-    record Estimate(double score, double error) {}
+    record Estimate(double score, double low, double high) {}
     record Measurement(String benchmark, String subject, int size, String unit, Estimate primary, Map<String, Estimate> secondary) {}
     record Footprint(String subject, int size, double bytesPerEntry) {}
-    record Run(String mode, String generatedAt, String javaVersion, int cpuCount, int forks,
+    record Run(String mode, String generatedAt, String javaVersion, int cpuCount, int minForks, int maxForks,
                List<Measurement> results, List<Footprint> footprint) {}
 
     private record Row(String subject, String label) {}
@@ -74,7 +73,8 @@ public final class BenchmarkReport {
         JsonNode results = parse(jmhJson);
         List<Measurement> measurements = new ArrayList<>();
         String javaVersion = "";
-        int forks = 0;
+        int minForks = Integer.MAX_VALUE;
+        int maxForks = 0;
         for (JsonNode result : results) {
             JsonNode params = result.path("params");
             JsonNode primary = result.path("primaryMetric");
@@ -85,9 +85,11 @@ public final class BenchmarkReport {
                 params.path("subject").asText(), params.path("size").asInt(), primary.path("scoreUnit").asText(),
                 estimate(primary), secondary));
             javaVersion = result.path("jdkVersion").asText(javaVersion);
-            forks = Math.max(forks, result.path("forks").asInt());
+            minForks = Math.min(minForks, result.path("forks").asInt());
+            maxForks = Math.max(maxForks, result.path("forks").asInt());
         }
-        return new Run(mode, generatedAt, javaVersion, cpuCount, forks, List.copyOf(measurements), List.copyOf(footprint));
+        return new Run(mode, generatedAt, javaVersion, cpuCount, measurements.isEmpty() ? 0 : minForks, maxForks,
+            List.copyOf(measurements), List.copyOf(footprint));
     }
 
     static List<Footprint> readFootprint(String json) {
@@ -104,17 +106,18 @@ public final class BenchmarkReport {
     }
 
     static String summary(Run run) {
+        int size = summarySize(run);
         StringBuilder out = new StringBuilder();
-        out.append(String.format(Locale.ROOT, "Measured %s on Java %s with %d CPUs, %d %s per benchmark, at %,d entries. "
+        out.append(String.format(Locale.ROOT, "Measured %s on Java %s with %d CPUs, %s per benchmark, at %,d entries. "
                 + "Lower is better for time and memory; higher is better for operations per second.%n%n",
-            run.generatedAt(), run.javaVersion(), run.cpuCount(), run.forks(), run.forks() == 1 ? "fork" : "forks", SUMMARY_SIZE));
+            run.generatedAt(), run.javaVersion(), run.cpuCount(), forks(run), size));
 
         out.append("**Single thread and memory**\n\n| | get | put | Memory per entry |\n|---|---:|---:|---:|\n");
         for (Row row : LIBRARIES) {
             out.append("| ").append(row.label())
-                .append(" | ").append(cell(primary(run, "KeyLookupBenchmark.get", row.subject(), SUMMARY_SIZE), BenchmarkReport::time))
-                .append(" | ").append(cell(primary(run, "KeyLookupBenchmark.put", row.subject(), SUMMARY_SIZE), BenchmarkReport::time))
-                .append(" | ").append(cell(bytes(run, row.subject(), SUMMARY_SIZE), BenchmarkReport::memory))
+                .append(" | ").append(cell(primary(run, "KeyLookupBenchmark.get", row.subject(), size), BenchmarkReport::time))
+                .append(" | ").append(cell(primary(run, "KeyLookupBenchmark.put", row.subject(), size), BenchmarkReport::time))
+                .append(" | ").append(cell(bytes(run, row.subject(), size), BenchmarkReport::memory))
                 .append(" |\n");
         }
 
@@ -122,7 +125,7 @@ public final class BenchmarkReport {
             + "| | Reads only | Mixed: reads | Mixed: writes |\n|---|---:|---:|---:|\n");
         for (Row row : LIBRARIES) {
             out.append("| ").append(row.label())
-                .append(" | ").append(cell(primary(run, "ConcurrentBenchmark.readOnly", row.subject(), SUMMARY_SIZE).map(Measurement::primary), BenchmarkReport::throughput))
+                .append(" | ").append(cell(primary(run, "ConcurrentBenchmark.readOnly", row.subject(), size).map(Measurement::primary), BenchmarkReport::throughput))
                 .append(" | ").append(cell(secondary(run, "mixedRead", row.subject()), BenchmarkReport::throughput))
                 .append(" | ").append(cell(secondary(run, "mixedWrite", row.subject()), BenchmarkReport::throughput))
                 .append(" |\n");
@@ -132,11 +135,20 @@ public final class BenchmarkReport {
         for (Row row : SEARCHERS) {
             out.append("| ").append(row.label());
             for (String query : List.of("prefixName", "exactCity", "compoundCityAge", "rangeAge")) {
-                out.append(" | ").append(cell(primary(run, "SearchBenchmark." + query, row.subject(), SUMMARY_SIZE), BenchmarkReport::time));
+                out.append(" | ").append(cell(primary(run, "SearchBenchmark." + query, row.subject(), size), BenchmarkReport::time));
             }
             out.append(" |\n");
         }
         return out.toString();
+    }
+
+    static int summarySize(Run run) {
+        return run.results().stream().mapToInt(Measurement::size).max().orElse(0);
+    }
+
+    static String forks(Run run) {
+        if (run.minForks() == run.maxForks()) return run.maxForks() + (run.maxForks() == 1 ? " fork" : " forks");
+        return run.minForks() + "–" + run.maxForks() + " forks";
     }
 
     static String time(Measurement measurement) {
@@ -171,7 +183,7 @@ public final class BenchmarkReport {
     }
 
     private static Optional<Estimate> secondary(Run run, String metric, String subject) {
-        return primary(run, "ConcurrentBenchmark.mixed", subject, SUMMARY_SIZE).map(m -> m.secondary().get(metric));
+        return primary(run, "ConcurrentBenchmark.mixed", subject, summarySize(run)).map(m -> m.secondary().get(metric));
     }
 
     private static Optional<Double> bytes(Run run, String subject, int size) {
@@ -191,7 +203,7 @@ public final class BenchmarkReport {
             .put("generatedAt", run.generatedAt())
             .put("javaVersion", run.javaVersion())
             .put("cpuCount", run.cpuCount())
-            .put("forks", run.forks());
+            .put("forks", forks(run));
         ArrayNode results = root.putArray("results");
         for (Measurement measurement : run.results()) {
             ObjectNode node = results.addObject()
@@ -212,12 +224,35 @@ public final class BenchmarkReport {
 
     private static void put(ObjectNode node, Estimate estimate) {
         node.put("score", estimate.score());
-        if (Double.isFinite(estimate.error())) node.put("error", estimate.error());
-        else node.putNull("error");
+        if (estimate.low() < estimate.high()) {
+            node.put("low", estimate.low());
+            node.put("high", estimate.high());
+        } else {
+            node.putNull("low");
+            node.putNull("high");
+        }
     }
 
-    private static Estimate estimate(JsonNode metric) {
-        return new Estimate(metric.path("score").asDouble(), metric.path("scoreError").asDouble(Double.NaN));
+    static Estimate estimate(JsonNode metric) {
+        List<Double> forkAverages = new ArrayList<>();
+        for (JsonNode fork : metric.path("rawData")) {
+            double sum = 0;
+            int count = 0;
+            for (JsonNode iteration : fork) {
+                sum += iteration.asDouble();
+                count++;
+            }
+            if (count > 0) forkAverages.add(sum / count);
+        }
+        if (forkAverages.isEmpty()) {
+            double score = metric.path("score").asDouble();
+            return new Estimate(score, score, score);
+        }
+        forkAverages.sort(null);
+        int middle = forkAverages.size() / 2;
+        double median = forkAverages.size() % 2 == 1 ? forkAverages.get(middle)
+            : (forkAverages.get(middle - 1) + forkAverages.get(middle)) / 2;
+        return new Estimate(median, forkAverages.getFirst(), forkAverages.getLast());
     }
 
     private static JsonNode parse(String json) {

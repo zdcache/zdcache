@@ -11,7 +11,7 @@ import java.util.Locale;
 import org.openjdk.jol.info.GraphLayout;
 
 public final class MemoryFootprint {
-    private static final List<Integer> SIZES = List.of(10_000, 100_000);
+    private static List<Integer> SIZES = List.of(10_000, 100_000);
     private static final List<String> KEY_ONLY =
         List.of(Subjects.CAFFEINE, Subjects.ZDCACHE_LHM_KEYS, Subjects.ZDCACHE_CAFFEINE_KEYS, Subjects.ZDCACHE_BUFFERED_KEYS,
             Subjects.GUAVA, Subjects.CACHE2K);
@@ -20,6 +20,7 @@ public final class MemoryFootprint {
             Subjects.CQENGINE);
 
     public static void main(String[] args) throws IOException {
+        if (args.length > 1) SIZES = BenchmarkPlan.read(Path.of(args[1])).footprintSizes();
         Map<String, Map<Integer, Double>> measured = new LinkedHashMap<>();
         for (String subject : KEY_ONLY) measured.put(subject, measure(subject));
         for (String subject : INDEXED) measured.put(subject, measure(subject));
