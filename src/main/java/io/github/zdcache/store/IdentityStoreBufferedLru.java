@@ -89,6 +89,7 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     private final AtomicInteger pendingWrites = new AtomicInteger();
     private final AtomicInteger size = new AtomicInteger();
     private final AtomicBoolean replayScheduled = new AtomicBoolean();
+    private final AtomicInteger readingThreads = new AtomicInteger();
     private final boolean approximate;
 
 
@@ -265,7 +266,14 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
         Stripe stripe = stripe();
         if (approximate) {
             if (stripe.offer(node)) {
-                if (stripe.pending() >= DRAIN_THRESHOLD) scheduleReplay();
+                if (stripe.pending() < DRAIN_THRESHOLD) return;
+                if (readingThreads.get() > 1) {
+                    scheduleReplay();
+                } else if (writersWaiting.get() == 0 && lock.tryLock()) {
+                    try {
+                        drain(stripe);
+                    } finally { lock.unlock(); }
+                }
             } else if (writersWaiting.get() == 0 && lock.tryLock()) {
                 try {
                     drain(stripe);
@@ -320,7 +328,7 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
         int index = stripeIndex();
         Stripe stripe = stripes.get(index);
         if (stripe != null) return stripe;
-        stripes.compareAndSet(index, null, new Stripe());
+        if (stripes.compareAndSet(index, null, new Stripe())) readingThreads.incrementAndGet();
         return stripes.get(index);
     }
 
