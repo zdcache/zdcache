@@ -1,14 +1,13 @@
 package io.github.zdcache.index;
 
 import io.github.zdcache.ValueRange;
-import java.util.LinkedHashSet;
 import java.util.NavigableMap;
-import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Consumer;
 
 /** Homogeneous comparable keys are required within a range dimension. */
 public final class RangeIndex<ID> implements DimensionIndex<ID> {
-    private final NavigableMap<Comparable<Object>, Set<ID>> idsByValue = new TreeMap<>();
+    private final NavigableMap<Comparable<Object>, Object> idsByValue = new TreeMap<>();
 
     @SuppressWarnings("unchecked")
     private Comparable<Object> key(Object value) {
@@ -27,33 +26,26 @@ public final class RangeIndex<ID> implements DimensionIndex<ID> {
     }
 
     @Override public void add(ID id, Object value) {
-        idsByValue.computeIfAbsent(key(value), ignored -> new LinkedHashSet<>()).add(id);
+        idsByValue.compute(key(value), (ignored, ids) -> Ids.add(ids, id));
     }
 
     @Override public void remove(ID id, Object value) {
-        Set<ID> ids = idsByValue.get(key(value));
-        if (ids != null) {
-            ids.remove(id);
-            if (ids.isEmpty()) idsByValue.remove(key(value));
-        }
+        idsByValue.computeIfPresent(key(value), (ignored, ids) -> Ids.remove(ids, id));
     }
 
     @Override public boolean isEmpty() { return idsByValue.isEmpty(); }
 
-    @Override public Set<ID> search(Object query) {
+    @Override public void forEachMatch(Object query, Consumer<? super ID> action) {
         if (!(query instanceof ValueRange<?> range)) {
             throw new IllegalArgumentException("Range query must be ValueRange.between(from, to)");
         }
-        LinkedHashSet<ID> result = new LinkedHashSet<>();
+        NavigableMap<Comparable<Object>, Object> matching;
         try {
-            for (Set<ID> bucket : idsByValue.subMap(key(range.from()), true,
-                                                       key(range.to()), true).values()) {
-                result.addAll(bucket);
-            }
+            matching = idsByValue.subMap(key(range.from()), true, key(range.to()), true);
+            for (Object ids : matching.values()) Ids.forEach(ids, action);
         } catch (ClassCastException e) {
             throw new IllegalArgumentException("Range query " + range.from().getClass().getName() +
                 " cannot be compared with the indexed values", e);
         }
-        return result;
     }
 }

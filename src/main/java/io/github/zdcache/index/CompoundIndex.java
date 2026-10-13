@@ -4,7 +4,7 @@ import io.github.zdcache.IndexKind;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.function.Consumer;
 
 public final class CompoundIndex<ID> implements DimensionIndex<ID> {
     private final IndexKind lastKind;
@@ -63,9 +63,9 @@ public final class CompoundIndex<ID> implements DimensionIndex<ID> {
 
     @Override public boolean isEmpty() { return buckets.isEmpty(); }
 
-    @Override public Set<ID> search(Object query) {
+    @Override public void forEachMatch(Object query, Consumer<? super ID> action) {
         List<Object> values = tuple(query);
         DimensionIndex<ID> bucket = buckets.get(head(values));
-        return bucket == null ? Set.of() : bucket.search(last(values));
+        if (bucket != null) bucket.forEachMatch(last(values), action);
     }
 }

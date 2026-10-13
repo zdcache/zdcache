@@ -45,13 +45,14 @@ class ZDCacheTest {
             .build();
     }
 
-    private static void forBothStores(java.util.function.Consumer<ZDCache> scenario) {
+    private static void forEachStore(java.util.function.Consumer<ZDCache> scenario) {
         scenario.accept(create(IdentityStoreFactory.linkedHashMap(), 10));
         scenario.accept(create(IdentityStoreFactory.caffeine(), 10));
+        scenario.accept(create(IdentityStoreFactory.bufferedLru(), 10));
     }
 
     @Test void prefixesAndNestedCollectionsAndDuplicateRoots() {
-        forBothStores(cache -> {
+        forEachStore(cache -> {
             var spec = personSpecification();
             cache.put(person(1, "Simon", 29,
                 new Address("Norway", "Oslo", List.of("home", "office")),
@@ -72,7 +73,7 @@ class ZDCacheTest {
     }
 
     @Test void replacementReindexesByCapturedSnapshot() {
-        forBothStores(cache -> {
+        forEachStore(cache -> {
             var id = IdentityDimension.of(MutablePerson.class, "id", MutablePerson::getId);
             var spec = SearchSpecification.builder(id)
                 .prefix("name", MutablePerson::getName).build();
@@ -97,7 +98,7 @@ class ZDCacheTest {
     }
 
     @Test void insertConflictsAndIdentityNeverChanges() {
-        forBothStores(cache -> {
+        forEachStore(cache -> {
             var old = personSpecification();
             cache.put(person(1, "Simon", 25), old);
             var conflicting = SearchSpecification.builder(PERSON_ID)
@@ -114,7 +115,7 @@ class ZDCacheTest {
     }
 
     @Test void fullReindexCanAddAndRemoveDimensions() {
-        forBothStores(cache -> {
+        forEachStore(cache -> {
             var basic = SearchSpecification.basic(PERSON_ID);
             cache.put(person(1, "Simon", 26, new Address("Norway", "Oslo", List.of())), basic);
             assertThrows(MissingSearchSpecificationStrategyException.class,
@@ -132,7 +133,7 @@ class ZDCacheTest {
     }
 
     @Test void failedReindexLeavesPreviousSpecificationUntouched() {
-        forBothStores(cache -> {
+        forEachStore(cache -> {
             var old = personSpecification();
             cache.put(person(1, "Simon", 22), old);
             var broken = SearchSpecification.builder(PERSON_ID)
@@ -147,7 +148,7 @@ class ZDCacheTest {
 
     @Test void evictionCleansDimensionsAndTypeCapsAreIndependent() {
         for (IdentityStoreFactory factory : List.of(
-                IdentityStoreFactory.linkedHashMap(), IdentityStoreFactory.caffeine())) {
+                IdentityStoreFactory.linkedHashMap(), IdentityStoreFactory.caffeine(), IdentityStoreFactory.bufferedLru())) {
             var cache = ZDCache.builder()
                 .capacity(Person.class, 2)
                 .capacity(Company.class, 1)
@@ -177,7 +178,7 @@ class ZDCacheTest {
     }
 
     @Test void explicitDefaultIdentityCanBeUpgradedWithoutRekeying() {
-        forBothStores(cache -> {
+        forEachStore(cache -> {
             cache.put(Person.class, 1L, person(1, "Simon", 20));
             assertEquals("Simon", cache.get(Person.class, 1L).name());
             assertThrows(MissingSearchSpecificationStrategyException.class,

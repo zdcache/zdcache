@@ -17,6 +17,11 @@ class TypeResolutionTest {
         Manager(long id, String name) { super(id, name); }
     }
 
+    interface Root { long id(); }
+    interface Middle extends Root {}
+    interface Leaf extends Middle {}
+    record Thing(long id) implements Leaf, Middle {}
+
     interface Named { String name(); }
     interface Tagged { String tag(); }
     interface Pet extends Named {}
@@ -216,5 +221,15 @@ class TypeResolutionTest {
         assertThrows(MissingIdentitySpecificationException.class, () -> cache.put(new Dog("Rex")));
         assertThrows(MissingSearchSpecificationStrategyException.class,
             () -> cache.search(Dog.class, "name", "r"));
+    }
+
+    @Test void interfacesReachedThroughSeveralPathsAreVisitedOnce() {
+        var cache = ZDCache.builder().build();
+        cache.register(SearchSpecification.basic(IdentityDimension.of(Root.class, "id", Root::id)));
+
+        cache.put(new Thing(7));
+
+        assertEquals(7L, cache.get(Thing.class, 7L).id());
+        assertEquals(1, cache.size(Root.class));
     }
 }

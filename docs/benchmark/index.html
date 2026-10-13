@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZDCache benchmark</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --baseline: #c3c2b7;
+    --other: #898781;
+    --border: rgba(11, 11, 11, 0.10);
+    --control: rgba(11, 11, 11, 0.06);
+    --series-1: #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface-1: #1a1a19;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --grid: #2c2c2a;
+      --baseline: #383835;
+      --other: #898781;
+      --border: rgba(255, 255, 255, 0.10);
+      --control: rgba(255, 255, 255, 0.08);
+      --series-1: #3987e5;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --baseline: #383835;
+    --other: #898781;
+    --border: rgba(255, 255, 255, 0.10);
+    --control: rgba(255, 255, 255, 0.08);
+    --series-1: #3987e5;
+  }
+
+  body { margin: 0; }
+  .viz-root {
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 32px;
+    min-height: 100vh;
+    box-sizing: border-box;
+  }
+  .back { margin: 0 0 12px; font-size: 13px; }
+  .back a { color: var(--text-secondary); text-decoration: none; }
+  .back a:hover { color: var(--text-primary); }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 14px; margin: 0 0 16px; max-width: 960px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; margin: 0 0 8px; font-size: 13px; color: var(--text-secondary); }
+  .filter { display: flex; align-items: center; gap: 10px; }
+  .segmented { display: inline-flex; background: var(--control); border-radius: 8px; padding: 2px; gap: 2px; }
+  .segmented button {
+    font: inherit; font-size: 13px; color: var(--text-secondary); background: transparent;
+    border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
+  }
+  .segmented button[aria-pressed="true"] { background: var(--surface-1); color: var(--text-primary); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+  .segmented button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+  .key { display: flex; gap: 16px; margin: 4px 0 8px; padding: 0; list-style: none; font-size: 12px; color: var(--text-secondary); }
+  .key li { display: flex; align-items: center; gap: 6px; }
+  .key .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  section.part > h2 { font-size: 18px; font-weight: 600; margin: 24px 0 2px; }
+  section.part > p { font-size: 13px; color: var(--text-secondary); margin: 0 0 12px; max-width: 960px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 16px 8px; min-width: 0; }
+  .card h3 { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
+  .card .direction { font-size: 12px; color: var(--text-muted); margin: 0 0 6px; }
+  svg { display: block; overflow: visible; }
+  svg:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; border-radius: 4px; }
+  .tick { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .axis-title { fill: var(--text-muted); font-size: 11px; }
+  .row-label { fill: var(--text-secondary); font-size: 12px; }
+  .row-label.highlight { fill: var(--text-primary); font-weight: 600; }
+  .value-label { fill: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .tooltip {
+    position: fixed; pointer-events: none; z-index: 10; display: none;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    padding: 8px 10px; font-size: 12px; min-width: 200px;
+  }
+  .tooltip .heading { color: var(--text-secondary); margin-bottom: 4px; }
+  .tooltip .value { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tooltip .detail { color: var(--text-muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+  table { border-collapse: collapse; margin-top: 8px; font-size: 12px; font-variant-numeric: tabular-nums; background: var(--surface-1); }
+  th, td { border-bottom: 1px solid var(--grid); padding: 5px 10px; text-align: right; }
+  th { color: var(--text-secondary); font-weight: 600; }
+  td:first-child, th:first-child { text-align: left; }
+  .note { font-size: 12px; color: var(--text-muted); margin-top: 28px; max-width: 960px; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <p class="back"><a href="../">← ZDCache</a></p>
+  <h1>ZDCache benchmark</h1>
+  <p class="subtitle" id="subtitle"></p>
+  <div class="filters">
+    <div class="filter"><span>Compare</span><div class="segmented" id="views" role="group" aria-label="Compare"></div></div>
+    <div class="filter"><span>Entries</span><div class="segmented" id="sizes" role="group" aria-label="Entries"></div></div>
+  </div>
+  <ul class="key" id="key"></ul>
+  <div id="page"></div>
+  <p class="note" id="note"></p>
+  <div class="tooltip" id="tooltip" role="status" aria-live="polite"></div>
+</div>
+<script>
+const DATA = {"mode":"full","generatedAt":"2026-10-13T13:28:26Z","javaVersion":"21.0.6","cpuCount":11,"forks":3,"results":[{"benchmark":"ConcurrentBenchmark.mixed","subject":"caffeine","size":100000,"unit":"ops/us","primary":{"score":53.674798220940765,"error":8.748905253818487},"secondary":{"mixedRead":{"score":47.14861549202271,"error":7.898743785574068},"mixedWrite":{"score":6.5261827289180605,"error":0.8931744492718696}}},{"benchmark":"ConcurrentBenchmark.mixed","subject":"zdcache-lhm-keys","size":100000,"unit":"ops/us","primary":{"score":3.904625469972395,"error":0.41960368632717815},"secondary":{"mixedRead":{"score":3.2719374802650716,"error":0.32421967988483835},"mixedWrite":{"score":0.6326879897073234,"error":0.10466636888960924}}},{"benchmark":"ConcurrentBenchmark.mixed","subject":"zdcache-caffeine-keys","size":100000,"unit":"ops/us","primary":{"score":22.09217175304155,"error":4.309493181497334},"secondary":{"mixedRead":{"score":20.888275087404775,"error":4.31865311178969},"mixedWrite":{"score":1.2038966656367818,"error":0.12544315271303366}}},{"benchmark":"ConcurrentBenchmark.mixed","subject":"zdcache-lhm-indexed","size":100000,"unit":"ops/us","primary":{"score":0.9659150657271579,"error":0.1732821506230044},"secondary":{"mixedRead":{"score":0.7959666447549147,"error":0.16226641083659812},"mixedWrite":{"score":0.16994842097224291,"error":0.014036581754213052}}},{"benchmark":"ConcurrentBenchmark.mixed","subject":"zdcache-caffeine-indexed","size":100000,"unit":"ops/us","primary":{"score":21.11222825658231,"error":5.009586764343759},"secondary":{"mixedRead":{"score":20.999308116171683,"error":5.003881570999488},"mixedWrite":{"score":0.11292014041062788,"error":0.012600410134791558}}},{"benchmark":"ConcurrentBenchmark.mixed","subject":"zdcache-buffered-keys","size":100000,"unit":"ops/us","primary":{"score":11.958661158880334,"error":1.0075206256599247},"secondary":{"mixedRead":{"score":11.361487711043306,"error":0.9923790254708722},"mixedWrite":{"score":0.5971734478370259,"error":0.10541181610480888}}},{"benchmark":"ConcurrentBenchmark.mixed","subject":"zdcache-buffered-indexed","size":100000,"unit":"ops/us","primary":{"score":18.053814601208312,"error":2.646190381358533},"secondary":{"mixedRead":{"score":17.919024009004865,"error":2.6554119223453974},"mixedWrite":{"score":0.13479059220344675,"error":0.013841772364492327}}},{"benchmark":"ConcurrentBenchmark.mixed","subject":"guava","size":100000,"unit":"ops/us","primary":{"score":15.166413088371742,"error":1.631990972588365},"secondary":{"mixedRead":{"score":15.152901264571259,"error":1.6377188598496997},"mixedWrite":{"score":0.013511823800483222,"error":0.008782788439876283}}},{"benchmark":"ConcurrentBenchmark.mixed","subject":"cache2k","size":100000,"unit":"ops/us","primary":{"score":85.74530996505516,"error":19.68831402282141},"secondary":{"mixedRead":{"score":79.10186984061352,"error":19.041924983157013},"mixedWrite":{"score":6.643440124441609,"error":0.7458648347971858}}},{"benchmark":"ConcurrentBenchmark.mixed","subject":"cqengine","size":100000,"unit":"ops/us","primary":{"score":11.720402927299926,"error":0.5182898053076247},"secondary":{"mixedRead":{"score":11.629626839293946,"error":0.5179058897845379},"mixedWrite":{"score":0.09077608800597775,"error":0.0023774112281478594}}},{"benchmark":"ConcurrentBenchmark.readOnly","subject":"caffeine","size":100000,"unit":"ops/us","primary":{"score":83.77937046681997,"error":8.51520313576697},"secondary":{}},{"benchmark":"ConcurrentBenchmark.readOnly","subject":"zdcache-lhm-keys","size":100000,"unit":"ops/us","primary":{"score":6.437399580172251,"error":0.9780820819125944},"secondary":{}},{"benchmark":"ConcurrentBenchmark.readOnly","subject":"zdcache-caffeine-keys","size":100000,"unit":"ops/us","primary":{"score":51.5174484968157,"error":6.355315493337274},"secondary":{}},{"benchmark":"ConcurrentBenchmark.readOnly","subject":"zdcache-lhm-indexed","size":100000,"unit":"ops/us","primary":{"score":5.799401883519125,"error":0.1731629406292192},"secondary":{}},{"benchmark":"ConcurrentBenchmark.readOnly","subject":"zdcache-caffeine-indexed","size":100000,"unit":"ops/us","primary":{"score":32.926400183097456,"error":4.349577710706431},"secondary":{}},{"benchmark":"ConcurrentBenchmark.readOnly","subject":"zdcache-buffered-keys","size":100000,"unit":"ops/us","primary":{"score":32.60885351700204,"error":5.939532650200327},"secondary":{}},{"benchmark":"ConcurrentBenchmark.readOnly","subject":"zdcache-buffered-indexed","size":100000,"unit":"ops/us","primary":{"score":33.102277485049385,"error":3.581019804147577},"secondary":{}},{"benchmark":"ConcurrentBenchmark.readOnly","subject":"guava","size":100000,"unit":"ops/us","primary":{"score":13.469512959410253,"error":0.907193018255481},"secondary":{}},{"benchmark":"ConcurrentBenchmark.readOnly","subject":"cache2k","size":100000,"unit":"ops/us","primary":{"score":178.64660178183343,"error":15.33729569389553},"secondary":{}},{"benchmark":"ConcurrentBenchmark.readOnly","subject":"cqengine","size":100000,"unit":"ops/us","primary":{"score":14.475474781944177,"error":1.1157795205259133},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"caffeine","size":10000,"unit":"ns/op","primary":{"score":23.955841371488948,"error":0.39211410009829517},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-lhm-keys","size":10000,"unit":"ns/op","primary":{"score":22.503609052278858,"error":0.472293774584611},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-caffeine-keys","size":10000,"unit":"ns/op","primary":{"score":48.40747045235521,"error":2.7749815693639737},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-lhm-indexed","size":10000,"unit":"ns/op","primary":{"score":27.39092197928511,"error":3.0909281078531996},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-caffeine-indexed","size":10000,"unit":"ns/op","primary":{"score":44.73035786497142,"error":0.9293702963252808},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-lhm-indexed-lambda","size":10000,"unit":"ns/op","primary":{"score":26.07638096539548,"error":3.668468516807061},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-buffered-keys","size":10000,"unit":"ns/op","primary":{"score":23.376742220434565,"error":0.5461492204513496},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-buffered-indexed","size":10000,"unit":"ns/op","primary":{"score":25.59053022189001,"error":3.482794938170802},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"guava","size":10000,"unit":"ns/op","primary":{"score":39.012835154709165,"error":0.5234851835399149},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"cache2k","size":10000,"unit":"ns/op","primary":{"score":7.413410196628219,"error":0.05512681601525883},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"cqengine","size":10000,"unit":"ns/op","primary":{"score":260.8523193817634,"error":101.00999423564765},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"caffeine","size":100000,"unit":"ns/op","primary":{"score":40.43980156835984,"error":4.921071462699671},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-lhm-keys","size":100000,"unit":"ns/op","primary":{"score":36.39096692024488,"error":7.712749930808022},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-caffeine-keys","size":100000,"unit":"ns/op","primary":{"score":56.36682668924303,"error":12.331134718860996},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-lhm-indexed","size":100000,"unit":"ns/op","primary":{"score":55.02977498425715,"error":18.56100034270614},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-caffeine-indexed","size":100000,"unit":"ns/op","primary":{"score":90.9173129031513,"error":39.87210619178729},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-lhm-indexed-lambda","size":100000,"unit":"ns/op","primary":{"score":50.29817985740908,"error":8.336331686421492},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-buffered-keys","size":100000,"unit":"ns/op","primary":{"score":27.84969708945255,"error":1.8724484794893583},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"zdcache-buffered-indexed","size":100000,"unit":"ns/op","primary":{"score":42.23733651402073,"error":5.564554134448998},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"guava","size":100000,"unit":"ns/op","primary":{"score":42.96777007065011,"error":10.33000687925276},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"cache2k","size":100000,"unit":"ns/op","primary":{"score":12.761159116345612,"error":3.123561624817177},"secondary":{}},{"benchmark":"KeyLookupBenchmark.get","subject":"cqengine","size":100000,"unit":"ns/op","primary":{"score":380.4633899629725,"error":38.31084229964364},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"caffeine","size":10000,"unit":"ns/op","primary":{"score":68.16820518223612,"error":13.951174116696372},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-lhm-keys","size":10000,"unit":"ns/op","primary":{"score":31.28129909457591,"error":2.236534164538725},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-caffeine-keys","size":10000,"unit":"ns/op","primary":{"score":75.05657317349738,"error":6.046668776062173},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-lhm-indexed","size":10000,"unit":"ns/op","primary":{"score":1621.7670780880903,"error":118.15582363663768},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-caffeine-indexed","size":10000,"unit":"ns/op","primary":{"score":1705.267080475339,"error":80.70247867479837},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-lhm-indexed-lambda","size":10000,"unit":"ns/op","primary":{"score":1644.8300885731041,"error":83.3919502607095},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-buffered-keys","size":10000,"unit":"ns/op","primary":{"score":47.4498665605532,"error":2.461875330844918},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-buffered-indexed","size":10000,"unit":"ns/op","primary":{"score":1735.8979842712947,"error":190.14212891870363},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"guava","size":10000,"unit":"ns/op","primary":{"score":82.58567690576442,"error":84.41987058985147},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"cache2k","size":10000,"unit":"ns/op","primary":{"score":18.066801798248637,"error":0.6296355405524688},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"cqengine","size":10000,"unit":"ns/op","primary":{"score":3048.086920194435,"error":157.7828611255039},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"caffeine","size":100000,"unit":"ns/op","primary":{"score":124.6147821003112,"error":21.189729141168275},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-lhm-keys","size":100000,"unit":"ns/op","primary":{"score":90.27148784798744,"error":10.703477081731197},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-caffeine-keys","size":100000,"unit":"ns/op","primary":{"score":164.98692842232913,"error":20.142037101966817},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-lhm-indexed","size":100000,"unit":"ns/op","primary":{"score":2506.7211806794817,"error":220.23394638127442},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-caffeine-indexed","size":100000,"unit":"ns/op","primary":{"score":3294.1435501098904,"error":1193.405678743105},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-lhm-indexed-lambda","size":100000,"unit":"ns/op","primary":{"score":2286.2381338957325,"error":281.8179415941267},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-buffered-keys","size":100000,"unit":"ns/op","primary":{"score":83.7463341415109,"error":7.032566039204497},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"zdcache-buffered-indexed","size":100000,"unit":"ns/op","primary":{"score":2637.9281762979585,"error":675.8719134306791},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"guava","size":100000,"unit":"ns/op","primary":{"score":119.03691935717124,"error":25.9222123304234},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"cache2k","size":100000,"unit":"ns/op","primary":{"score":40.16845323595796,"error":6.113528174976979},"secondary":{}},{"benchmark":"KeyLookupBenchmark.put","subject":"cqengine","size":100000,"unit":"ns/op","primary":{"score":4457.7230120789645,"error":437.0477496878751},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"caffeine","size":10000,"unit":"us/op","primary":{"score":89.29315135190492,"error":1.0503891787643638},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"zdcache-lhm-indexed","size":10000,"unit":"us/op","primary":{"score":0.38301256261356365,"error":0.006393868767388906},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"zdcache-caffeine-indexed","size":10000,"unit":"us/op","primary":{"score":0.36865791337737713,"error":0.012345027702298752},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"zdcache-buffered-indexed","size":10000,"unit":"us/op","primary":{"score":0.37885180453073086,"error":0.024173287664328597},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"guava","size":10000,"unit":"us/op","primary":{"score":134.84195859892537,"error":4.009509552988245},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"cache2k","size":10000,"unit":"us/op","primary":{"score":196.85616318520968,"error":2.4877511676498014},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"cqengine","size":10000,"unit":"us/op","primary":{"score":3.1725602480703583,"error":0.18548500218299901},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"caffeine","size":100000,"unit":"us/op","primary":{"score":1146.0963960645788,"error":15.83919423771882},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"zdcache-lhm-indexed","size":100000,"unit":"us/op","primary":{"score":2.3154158558661977,"error":0.08241996523750515},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"zdcache-caffeine-indexed","size":100000,"unit":"us/op","primary":{"score":2.3254633240818725,"error":0.05602562659951871},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"zdcache-buffered-indexed","size":100000,"unit":"us/op","primary":{"score":2.3334917470514265,"error":0.0503613642123782},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"guava","size":100000,"unit":"us/op","primary":{"score":2895.383094501936,"error":149.0820079420476},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"cache2k","size":100000,"unit":"us/op","primary":{"score":2642.2365244911634,"error":284.9677874369475},"secondary":{}},{"benchmark":"SearchBenchmark.compoundCityAge","subject":"cqengine","size":100000,"unit":"us/op","primary":{"score":34.7103504885384,"error":0.953786337306881},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"caffeine","size":10000,"unit":"us/op","primary":{"score":94.06577987684392,"error":3.4388320406406194},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"zdcache-lhm-indexed","size":10000,"unit":"us/op","primary":{"score":1.1295568154720135,"error":0.020193299091772865},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"zdcache-caffeine-indexed","size":10000,"unit":"us/op","primary":{"score":1.1242503139734756,"error":0.011451690508319767},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"zdcache-buffered-indexed","size":10000,"unit":"us/op","primary":{"score":1.101740565706296,"error":0.01399408459632621},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"guava","size":10000,"unit":"us/op","primary":{"score":159.85511309707127,"error":60.83120109954488},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"cache2k","size":10000,"unit":"us/op","primary":{"score":199.19902979920136,"error":5.466434608482839},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"cqengine","size":10000,"unit":"us/op","primary":{"score":1.4066921220479942,"error":0.008663426609444653},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"caffeine","size":100000,"unit":"us/op","primary":{"score":1265.8088615279082,"error":103.81517860297403},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"zdcache-lhm-indexed","size":100000,"unit":"us/op","primary":{"score":12.368253002444796,"error":0.26785029436793273},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"zdcache-caffeine-indexed","size":100000,"unit":"us/op","primary":{"score":14.795348339976673,"error":3.3996761820320103},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"zdcache-buffered-indexed","size":100000,"unit":"us/op","primary":{"score":14.661049154448005,"error":3.941966527135542},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"guava","size":100000,"unit":"us/op","primary":{"score":3101.28895101161,"error":332.5451806703273},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"cache2k","size":100000,"unit":"us/op","primary":{"score":2413.8251807530587,"error":135.4214785819863},"secondary":{}},{"benchmark":"SearchBenchmark.exactCity","subject":"cqengine","size":100000,"unit":"us/op","primary":{"score":21.64099562530265,"error":3.0124355947997965},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"caffeine","size":10000,"unit":"us/op","primary":{"score":73.20763014693266,"error":6.667657779192399},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"zdcache-lhm-indexed","size":10000,"unit":"us/op","primary":{"score":0.1490025298909006,"error":0.02381036270407821},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"zdcache-caffeine-indexed","size":10000,"unit":"us/op","primary":{"score":0.1387888278314667,"error":0.015917109348656398},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"zdcache-buffered-indexed","size":10000,"unit":"us/op","primary":{"score":0.15563767970738845,"error":0.019423044563313868},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"guava","size":10000,"unit":"us/op","primary":{"score":124.64966315681907,"error":8.583208781188299},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"cache2k","size":10000,"unit":"us/op","primary":{"score":179.90136047630634,"error":8.42098946550144},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"cqengine","size":10000,"unit":"us/op","primary":{"score":1.8097076254989135,"error":0.01671733967700202},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"caffeine","size":100000,"unit":"us/op","primary":{"score":912.9893456193153,"error":11.986090782479534},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"zdcache-lhm-indexed","size":100000,"unit":"us/op","primary":{"score":1.2696692425082634,"error":0.03370166830517955},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"zdcache-caffeine-indexed","size":100000,"unit":"us/op","primary":{"score":1.2454681150861115,"error":0.03143989920857776},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"zdcache-buffered-indexed","size":100000,"unit":"us/op","primary":{"score":1.2798399170133805,"error":0.036300529691688205},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"guava","size":100000,"unit":"us/op","primary":{"score":2536.5682061603193,"error":279.2920225881044},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"cache2k","size":100000,"unit":"us/op","primary":{"score":1966.3985584250006,"error":77.38462305827677},"secondary":{}},{"benchmark":"SearchBenchmark.prefixName","subject":"cqengine","size":100000,"unit":"us/op","primary":{"score":19.75646432063299,"error":1.2210380047315883},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"caffeine","size":10000,"unit":"us/op","primary":{"score":81.30541154155907,"error":1.906702836065428},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"zdcache-lhm-indexed","size":10000,"unit":"us/op","primary":{"score":8.445060946161911,"error":0.14681479692165703},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"zdcache-caffeine-indexed","size":10000,"unit":"us/op","primary":{"score":9.985220420383051,"error":4.763426936867782},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"zdcache-buffered-indexed","size":10000,"unit":"us/op","primary":{"score":8.402169170295975,"error":0.236222660605247},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"guava","size":10000,"unit":"us/op","primary":{"score":126.00684346068297,"error":1.9564884930739974},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"cache2k","size":10000,"unit":"us/op","primary":{"score":241.15698477912144,"error":15.838438936378385},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"cqengine","size":10000,"unit":"us/op","primary":{"score":9.834691416400956,"error":0.10701388096537466},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"caffeine","size":100000,"unit":"us/op","primary":{"score":1466.922658319283,"error":163.73980566433474},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"zdcache-lhm-indexed","size":100000,"unit":"us/op","primary":{"score":193.4502701601386,"error":27.56042315348585},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"zdcache-caffeine-indexed","size":100000,"unit":"us/op","primary":{"score":192.82000588855766,"error":43.47005524517093},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"zdcache-buffered-indexed","size":100000,"unit":"us/op","primary":{"score":182.93529625230184,"error":28.21820656929961},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"guava","size":100000,"unit":"us/op","primary":{"score":2733.227798712973,"error":401.62655717286816},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"cache2k","size":100000,"unit":"us/op","primary":{"score":3222.3116169848267,"error":369.0276527175748},"secondary":{}},{"benchmark":"SearchBenchmark.rangeAge","subject":"cqengine","size":100000,"unit":"us/op","primary":{"score":242.35456102663164,"error":37.52792923188358},"secondary":{}}],"footprint":[{"subject":"caffeine","size":10000,"bytesPerEntry":107.7},{"subject":"caffeine","size":100000,"bytesPerEntry":109.0},{"subject":"zdcache-lhm-keys","size":10000,"bytesPerEntry":94.6},{"subject":"zdcache-lhm-keys","size":100000,"bytesPerEntry":98.5},{"subject":"zdcache-caffeine-keys","size":10000,"bytesPerEntry":131.7},{"subject":"zdcache-caffeine-keys","size":100000,"bytesPerEntry":133.0},{"subject":"zdcache-buffered-keys","size":10000,"bytesPerEntry":118.6},{"subject":"zdcache-buffered-keys","size":100000,"bytesPerEntry":122.5},{"subject":"guava","size":10000,"bytesPerEntry":94.5},{"subject":"guava","size":100000,"bytesPerEntry":98.5},{"subject":"cache2k","size":10000,"bytesPerEntry":103.0},{"subject":"cache2k","size":100000,"bytesPerEntry":106.5},{"subject":"zdcache-lhm-indexed","size":10000,"bytesPerEntry":421.7},{"subject":"zdcache-lhm-indexed","size":100000,"bytesPerEntry":400.0},{"subject":"zdcache-caffeine-indexed","size":10000,"bytesPerEntry":458.8},{"subject":"zdcache-caffeine-indexed","size":100000,"bytesPerEntry":434.4},{"subject":"zdcache-buffered-indexed","size":10000,"bytesPerEntry":445.7},{"subject":"zdcache-buffered-indexed","size":100000,"bytesPerEntry":424.0},{"subject":"cqengine","size":10000,"bytesPerEntry":760.5},{"subject":"cqengine","size":100000,"bytesPerEntry":769.3}]};
+
+const VIEWS = [
+  { key: "libraries", name: "Libraries", highlightName: "zdcache", otherName: "Other libraries",
+    subtitle: "zdcache with its default buffered LRU store, compared with Caffeine, cache2k, Guava and CQEngine. "
+      + "Every chart uses a log scale, because the libraries differ by up to three orders of magnitude.",
+    rows: [
+      { subject: "zdcache-buffered-keys", label: "zdcache", highlight: true },
+      { subject: "zdcache-buffered-indexed", label: "zdcache, 4 indexes", highlight: true },
+      { subject: "caffeine", label: "Caffeine", scan: true },
+      { subject: "cache2k", label: "cache2k", scan: true },
+      { subject: "guava", label: "Guava", scan: true },
+      { subject: "cqengine", label: "CQEngine, 4 indexes" },
+    ] },
+  { key: "stores", name: "zdcache stores", highlightName: "Default store", otherName: "Other stores",
+    subtitle: "zdcache with each of its identity stores: the default buffered LRU store, the LinkedHashMap store and "
+      + "the Caffeine store, with and without indexes. Every chart uses a log scale.",
+    rows: [
+      { subject: "zdcache-buffered-keys", label: "Buffered LRU (default)", highlight: true },
+      { subject: "zdcache-buffered-indexed", label: "Buffered LRU, 4 indexes", highlight: true },
+      { subject: "zdcache-lhm-keys", label: "LinkedHashMap" },
+      { subject: "zdcache-lhm-indexed", label: "LinkedHashMap, 4 indexes" },
+      { subject: "zdcache-lhm-indexed-lambda", label: "LinkedHashMap, 4 indexes, lambdas" },
+      { subject: "zdcache-caffeine-keys", label: "Caffeine store" },
+      { subject: "zdcache-caffeine-indexed", label: "Caffeine store, 4 indexes" },
+    ] },
+];
+
+const PARTS = [
+  { title: "Key lookup", sized: true,
+    text: "One thread getting and putting entries by key. Every key is present, so there is no eviction pressure.",
+    charts: [
+      { title: "get", benchmark: "KeyLookupBenchmark.get", lowerIsBetter: true },
+      { title: "put", benchmark: "KeyLookupBenchmark.put", lowerIsBetter: true },
+    ] },
+  { title: "Search", sized: true,
+    text: "Finding every entry matching a query. Caches without indexes have to scan all entries. "
+      + "Exact matches about 2% of the entries, range about 16%.",
+    charts: [
+      { title: "Prefix on name", benchmark: "SearchBenchmark.prefixName", lowerIsBetter: true },
+      { title: "Exact city", benchmark: "SearchBenchmark.exactCity", lowerIsBetter: true },
+      { title: "Compound: exact city and age range", benchmark: "SearchBenchmark.compoundCityAge", lowerIsBetter: true },
+      { title: "Age range", benchmark: "SearchBenchmark.rangeAge", lowerIsBetter: true },
+    ] },
+  { title: "Concurrent", sized: false,
+    text: "Eight threads at 100,000 entries: all reading, or six reading while two write.",
+    charts: [
+      { title: "Reads only", benchmark: "ConcurrentBenchmark.readOnly", lowerIsBetter: false },
+      { title: "Mixed: reads", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedRead", lowerIsBetter: false },
+      { title: "Mixed: writes", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedWrite", lowerIsBetter: false },
+    ] },
+  { title: "Memory", sized: true,
+    text: "Heap bytes per cached entry, measured with JOL, excluding the cached objects themselves.",
+    charts: [
+      { title: "Bytes per entry", footprint: true, lowerIsBetter: true },
+    ] },
+];
+
+const SIZES = [...new Set(DATA.results.map(r => r.size).concat(DATA.footprint.map(f => f.size)))]
+  .filter(size => size > 0).sort((a, b) => a - b).map(size => ({ size, label: size.toLocaleString("en-US") }));
+const LARGEST = SIZES.length ? SIZES[SIZES.length - 1].size : 0;
+
+let activeView = VIEWS[0];
+let activeSize = SIZES[SIZES.length - 1];
+const openTables = new Set();
+
+const UNITS = { "ns/op": "ns", "us/op": "µs", "ms/op": "ms", "ops/us": "M ops/s", "bytes": "B" };
+
+function estimate(chart, subject, size) {
+  if (chart.footprint) {
+    const entry = DATA.footprint.find(f => f.subject === subject && f.size === size);
+    return entry ? { score: entry.bytesPerEntry, error: null, unit: "bytes" } : null;
+  }
+  const result = DATA.results.find(r => r.benchmark === chart.benchmark && r.subject === subject && r.size === size);
+  if (!result) return null;
+  const metric = chart.metric ? result.secondary[chart.metric] : result.primary;
+  return metric ? { score: metric.score, error: metric.error, unit: result.unit } : null;
+}
+
+function sizeFor(part) {
+  return part.sized ? activeSize.size : LARGEST;
+}
+
+function rowsFor(chart, part, size) {
+  return activeView.rows
+    .map(row => ({ row, value: estimate(chart, row.subject, size) }))
+    .filter(entry => entry.value && entry.value.score > 0)
+    .map(entry => ({ ...entry, label: part.title === "Search" && entry.row.scan ? entry.row.label + " (full scan)" : entry.row.label }));
+}
+
+function format(value, unit) {
+  const suffix = UNITS[unit] ?? unit;
+  if (unit === "bytes") return Math.round(value).toLocaleString("en-US") + " " + suffix;
+  const digits = value < 1 ? 2 : value < 10 ? 1 : 0;
+  return value.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }) + " " + suffix;
+}
+
+const SVG = "http://www.w3.org/2000/svg";
+function el(name, attributes = {}, parent) {
+  const node = document.createElementNS(SVG, name);
+  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+  if (parent) parent.appendChild(node);
+  return node;
+}
+
+const NICE = [1, 2, 5];
+
+function niceBelow(value) {
+  const exponent = Math.floor(Math.log10(value));
+  const factor = [...NICE].reverse().find(f => f * 10 ** exponent <= value) ?? 1;
+  return factor * 10 ** exponent;
+}
+
+function niceAbove(value) {
+  const exponent = Math.floor(Math.log10(value));
+  const factor = NICE.find(f => f * 10 ** exponent >= value);
+  return factor ? factor * 10 ** exponent : 10 ** (exponent + 1);
+}
+
+function logDomain(chart, part) {
+  const sizes = part.sized ? SIZES.map(s => s.size) : [LARGEST];
+  const values = sizes.flatMap(size => rowsFor(chart, part, size).flatMap(({ value }) => {
+    const error = value.error ?? 0;
+    return [value.score, value.score + error, value.score - error > 0 ? value.score - error : value.score];
+  }));
+  const low = Math.log10(niceBelow(Math.min(...values) * 0.9));
+  const high = Math.log10(niceAbove(Math.max(...values) * 1.1));
+  return { low, high: high - low < 0.3 ? low + 1 : high };
+}
+
+function ticksFor(domain) {
+  const decades = domain.high - domain.low;
+  const factors = decades <= 2 ? NICE : [1];
+  const ticks = [];
+  for (let exponent = Math.floor(domain.low); exponent <= Math.ceil(domain.high); exponent++) {
+    for (const factor of factors) {
+      const value = factor * 10 ** exponent;
+      const position = Math.log10(value);
+      if (position >= domain.low - 1e-9 && position <= domain.high + 1e-9) ticks.push(value);
+    }
+  }
+  return ticks;
+}
+
+const tickLabel = value => value >= 1e6 ? (value / 1e6) + "M" : value >= 1e3 ? (value / 1e3) + "k" : String(+value.toPrecision(3));
+
+const tooltip = document.getElementById("tooltip");
+function showTooltip(anchor, chart, entry, size) {
+  tooltip.replaceChildren();
+  const heading = document.createElement("div");
+  heading.className = "heading";
+  heading.textContent = `${entry.label} · ${chart.title} · ${size.toLocaleString("en-US")} entries`;
+  const value = document.createElement("div");
+  value.className = "value";
+  value.textContent = format(entry.value.score, entry.value.unit);
+  tooltip.append(heading, value);
+  if (entry.value.error != null) {
+    const error = document.createElement("div");
+    error.className = "detail";
+    error.textContent = `± ${format(entry.value.error, entry.value.unit)} (99.9% confidence interval)`;
+    tooltip.appendChild(error);
+  }
+  const direction = document.createElement("div");
+  direction.className = "detail";
+  direction.textContent = chart.lowerIsBetter ? "Lower is better" : "Higher is better";
+  tooltip.appendChild(direction);
+  tooltip.style.display = "block";
+  const box = tooltip.getBoundingClientRect();
+  const left = anchor.x + 16 + box.width > window.innerWidth ? anchor.x - box.width - 16 : anchor.x + 16;
+  tooltip.style.left = Math.max(8, left) + "px";
+  tooltip.style.top = Math.max(8, Math.min(window.innerHeight - box.height - 8, anchor.y - box.height / 2)) + "px";
+}
+const hideTooltip = () => { tooltip.style.display = "none"; };
+
+function drawChart(card, chart, part) {
+  const size = sizeFor(part);
+  const entries = rowsFor(chart, part, size);
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "direction";
+    empty.textContent = "Not measured in this run.";
+    card.appendChild(empty);
+    return;
+  }
+  const domain = logDomain(chart, part);
+  const rowHeight = 28;
+  const labelWidth = Math.max(120, Math.ceil(Math.max(...entries.map(entry => entry.label.length)) * 6.9) + 20);
+  const margin = { top: 6, right: 84, bottom: 40, left: labelWidth };
+  const width = Math.max(380, card.clientWidth - 32);
+  const plotWidth = width - margin.left - margin.right;
+  const height = margin.top + entries.length * rowHeight + margin.bottom;
+  const x = v => margin.left + (Math.log10(v) - domain.low) / (domain.high - domain.low) * plotWidth;
+  const yOf = index => margin.top + index * rowHeight + rowHeight / 2;
+  const unit = entries[0].value.unit;
+
+  const svg = el("svg", { width, height, viewBox: `0 0 ${width} ${height}`, tabindex: 0, role: "img",
+    "aria-label": `${chart.title}, ${size.toLocaleString("en-US")} entries, ${chart.lowerIsBetter ? "lower" : "higher"} is better. `
+      + "Use the up and down arrow keys to read each row." }, card);
+
+  for (const tick of ticksFor(domain)) {
+    el("line", { x1: x(tick), x2: x(tick), y1: margin.top, y2: height - margin.bottom, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    el("text", { x: x(tick), y: height - margin.bottom + 16, "text-anchor": "middle", class: "tick" }, svg).textContent = tickLabel(tick);
+  }
+  el("text", { x: margin.left + plotWidth / 2, y: height - 6, "text-anchor": "middle", class: "axis-title" }, svg)
+    .textContent = `${UNITS[unit] ?? unit} (log scale)`;
+
+  const marker = el("rect", { x: 0, width, height: rowHeight, fill: "var(--control)", visibility: "hidden", rx: 6 }, svg);
+
+  entries.forEach((entry, index) => {
+    const y = yOf(index);
+    const color = entry.row.highlight ? "var(--series-1)" : "var(--other)";
+    el("text", { x: margin.left - 12, y: y + 4, "text-anchor": "end", class: "row-label" + (entry.row.highlight ? " highlight" : "") }, svg)
+      .textContent = entry.label;
+    el("line", { x1: margin.left, x2: x(entry.value.score), y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    const { score, error } = entry.value;
+    if (error != null && error > 0) {
+      const lowEnd = Math.max(score - error, 10 ** domain.low);
+      el("line", { x1: x(lowEnd), x2: x(score + error), y1: y, y2: y, stroke: color, "stroke-width": 2, "stroke-linecap": "round", opacity: 0.45 }, svg);
+    }
+    el("circle", { cx: x(score), cy: y, r: 5, fill: color, stroke: "var(--surface-1)", "stroke-width": 2 }, svg);
+    el("text", { x: Math.max(x(score), x(score + (error ?? 0))) + 10, y: y + 4, class: "value-label" }, svg)
+      .textContent = format(score, unit);
+  });
+
+  let active = -1;
+  function select(index) {
+    active = index;
+    marker.setAttribute("y", yOf(index) - rowHeight / 2);
+    marker.setAttribute("visibility", "visible");
+    const box = svg.getBoundingClientRect();
+    showTooltip({ x: box.left + x(entries[index].value.score), y: box.top + yOf(index) }, chart, entries[index], size);
+  }
+  function clear() {
+    active = -1;
+    marker.setAttribute("visibility", "hidden");
+    hideTooltip();
+  }
+  const hit = el("rect", { x: 0, y: margin.top, width, height: entries.length * rowHeight, fill: "transparent" }, svg);
+  hit.addEventListener("pointermove", event => {
+    const index = Math.floor((event.clientY - svg.getBoundingClientRect().top - margin.top) / rowHeight);
+    if (index >= 0 && index < entries.length && index !== active) select(index);
+  });
+  hit.addEventListener("pointerleave", clear);
+  svg.addEventListener("keydown", event => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    const start = active < 0 ? (step > 0 ? -1 : entries.length) : active;
+    select(Math.min(entries.length - 1, Math.max(0, start + step)));
+  });
+  svg.addEventListener("blur", clear);
+}
+
+function partTable(part) {
+  const size = sizeFor(part);
+  const node = document.createElement("table");
+  const head = node.createTHead().insertRow();
+  for (const heading of ["", ...part.charts.map(chart => chart.title)]) {
+    const cell = document.createElement("th");
+    cell.textContent = heading;
+    head.appendChild(cell);
+  }
+  const body = node.createTBody();
+  for (const row of activeView.rows) {
+    const values = part.charts.map(chart => estimate(chart, row.subject, size));
+    if (values.every(value => !value)) continue;
+    const tr = body.insertRow();
+    tr.insertCell().textContent = part.title === "Search" && row.scan ? row.label + " (full scan)" : row.label;
+    for (const value of values) {
+      tr.insertCell().textContent = !value ? "–"
+        : format(value.score, value.unit) + (value.error != null ? " ± " + format(value.error, value.unit) : "");
+    }
+  }
+  return node;
+}
+
+function renderPage() {
+  const container = document.getElementById("page");
+  container.querySelectorAll("details").forEach(details => {
+    if (details.open) openTables.add(details.dataset.part); else openTables.delete(details.dataset.part);
+  });
+  container.replaceChildren();
+  document.getElementById("subtitle").textContent = activeView.subtitle;
+  const key = document.getElementById("key");
+  key.replaceChildren();
+  for (const [name, color] of [[activeView.highlightName, "var(--series-1)"], [activeView.otherName, "var(--other)"]]) {
+    const item = document.createElement("li");
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.style.background = color;
+    const label = document.createElement("span");
+    label.textContent = name;
+    item.append(dot, label);
+    key.appendChild(item);
+  }
+
+  const draws = [];
+  for (const part of PARTS) {
+    const section = document.createElement("section");
+    section.className = "part";
+    const heading = document.createElement("h2");
+    heading.textContent = part.sized ? `${part.title}, ${activeSize.label} entries` : part.title;
+    const text = document.createElement("p");
+    text.textContent = part.text;
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    section.append(heading, text, grid);
+    for (const chart of part.charts) {
+      const card = document.createElement("section");
+      card.className = "card";
+      const title = document.createElement("h3");
+      title.textContent = chart.title;
+      const direction = document.createElement("p");
+      direction.className = "direction";
+      direction.textContent = chart.lowerIsBetter ? "Lower is better" : "Higher is better";
+      card.append(title, direction);
+      grid.appendChild(card);
+      draws.push(() => drawChart(card, chart, part));
+    }
+    const details = document.createElement("details");
+    details.dataset.part = part.title;
+    details.open = openTables.has(part.title);
+    const summary = document.createElement("summary");
+    summary.textContent = "Table view";
+    details.append(summary, partTable(part));
+    section.appendChild(details);
+    container.appendChild(section);
+  }
+  draws.forEach(draw => draw());
+}
+
+function segmented(containerId, options, label, isActive, onSelect) {
+  const group = document.getElementById(containerId);
+  const buttons = options.map(option => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label(option);
+    button.setAttribute("aria-pressed", String(isActive(option)));
+    button.addEventListener("click", () => {
+      buttons.forEach(other => other.setAttribute("aria-pressed", String(other === button)));
+      onSelect(option);
+      if (containerId === "views") history.replaceState(null, "", "#" + option.key);
+      renderPage();
+    });
+    group.appendChild(button);
+    return button;
+  });
+}
+
+const fromHash = VIEWS.find(view => "#" + view.key === window.location.hash);
+if (fromHash) activeView = fromHash;
+segmented("views", VIEWS, view => view.name, view => view === activeView, view => { activeView = view; });
+segmented("sizes", SIZES, size => size.label, size => size === activeSize, size => { activeSize = size; });
+renderPage();
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(renderPage, 150);
+});
+document.getElementById("note").textContent =
+  (DATA.mode !== "full" ? `This is a ${DATA.mode} run, not a full run. ` : "")
+  + `Run ${DATA.generatedAt} on Java ${DATA.javaVersion} with ${DATA.cpuCount} CPUs, ${DATA.forks} JMH `
+  + `${DATA.forks === 1 ? "fork" : "forks"} per measurement. Times are JMH averages per operation and throughput is `
+  + "operations per microsecond (million per second); whiskers show JMH's 99.9% confidence interval. "
+  + "No benchmark puts the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts "
+  + "in LRU order per segment and zdcache in strict LRU order. Guava gets 5% extra capacity so its per-segment limits "
+  + "do not evict entries early. CQEngine never evicts, plans the compound query over separate hash and navigable "
+  + "indexes, and has its writes serialized with a lock. These numbers come from the author's development machine; "
+  + "results vary with hardware, JVM, load and data shape.";
+</script>
+</body>
+</html>

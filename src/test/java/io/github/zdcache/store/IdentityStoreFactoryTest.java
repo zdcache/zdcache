@@ -35,6 +35,17 @@ class IdentityStoreFactoryTest {
         }
     }
 
+    @Test void bufferedLruWorksWhenCaffeineIsMissing() throws Exception {
+        try (var withoutCaffeine = zdcacheOnlyClassLoader()) {
+            var factory = withoutCaffeine.loadClass(IdentityStoreFactory.class.getName());
+
+            Object bufferedLru = factory.getMethod("bufferedLru").invoke(null);
+            Object store = factory.getMethod("create", int.class).invoke(bufferedLru, 10);
+
+            assertEquals(IdentityStoreBufferedLru.class.getName(), store.getClass().getName());
+        }
+    }
+
     private static URLClassLoader zdcacheOnlyClassLoader() {
         URL mainClasses = IdentityStoreFactory.class.getProtectionDomain().getCodeSource().getLocation();
         return new URLClassLoader(new URL[] {mainClasses}, ClassLoader.getPlatformClassLoader());

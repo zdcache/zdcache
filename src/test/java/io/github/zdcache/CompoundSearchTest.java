@@ -32,9 +32,10 @@ class CompoundSearchTest {
         return people.stream().map(Person::id).sorted().toList();
     }
 
-    private static void forBothStores(int size, Consumer<ZDCache> scenario) {
+    private static void forEachStore(int size, Consumer<ZDCache> scenario) {
         scenario.accept(ZDCache.builder().defaultMaxPerType(size).identityStore(IdentityStoreFactory.linkedHashMap()).build());
         scenario.accept(ZDCache.builder().defaultMaxPerType(size).identityStore(IdentityStoreFactory.caffeine()).build());
+        scenario.accept(ZDCache.builder().defaultMaxPerType(size).identityStore(IdentityStoreFactory.bufferedLru()).build());
     }
 
     private static ZDCache populated(SearchSpecification<Person, Long> spec) {
@@ -82,7 +83,7 @@ class CompoundSearchTest {
     }
 
     @Test void replacementRemovalAndEvictionKeepCompoundIndexesConsistent() {
-        forBothStores(2, cache -> {
+        forEachStore(2, cache -> {
             var spec = spec();
             cache.put(person(1, "Simon", "Oslo", 29, List.of()), spec);
             cache.put(person(1, "Simon", "Bergen", 29, List.of()));

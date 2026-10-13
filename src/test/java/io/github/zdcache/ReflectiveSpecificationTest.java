@@ -30,6 +30,43 @@ class ReflectiveSpecificationTest {
         @Override public String getName() { return "VIP " + super.getName(); }
     }
 
+    static class CheckedFailure {
+        final long id = 1;
+        public String getName() throws java.io.IOException { throw new java.io.IOException("disk"); }
+    }
+
+    static class BrokenInvariant {
+        final long id = 1;
+        public String getName() { throw new AssertionError("broken"); }
+    }
+
+    static class Gadget {
+        final long id;
+        private final String code;
+        private final String label;
+        private final String model;
+
+        Gadget(long id, String code, String label, String model) {
+            this.id = id; this.code = code; this.label = label; this.model = model;
+        }
+        public String code() { return "plain-" + code; }
+        public static String label() { return "static"; }
+        public String isLabel() { return "not a boolean"; }
+        public void model() { }
+        public Boolean isArchived() { return Boolean.TRUE; }
+    }
+
+    static class Item {
+        final long id;
+        private final String sku;
+        Item(long id, String sku) { this.id = id; this.sku = sku; }
+    }
+
+    static class ShadowingItem extends Item {
+        static final String sku = "static";
+        ShadowingItem(long id, String sku) { super(id, sku); }
+    }
+
     static class Exploding {
         final long id = 1;
         public String getName() { throw new IllegalStateException("boom"); }
@@ -158,5 +195,74 @@ class ReflectiveSpecificationTest {
 
         var thrown = assertThrows(IllegalStateException.class, () -> cache.put(new Exploding(), spec));
         assertEquals("boom", thrown.getMessage());
+    }
+
+    @Test void checkedExceptionsFromGettersAreWrapped() {
+        var spec = SearchSpecification.builder(IdentityDimension.of(CheckedFailure.class, "id", (CheckedFailure c) -> c.id))
+            .prefix("name")
+            .build();
+        var cache = ZDCache.builder().build();
+
+        var thrown = assertThrows(PropertyAccessException.class, () -> cache.put(new CheckedFailure(), spec));
+
+        assertInstanceOf(java.io.IOException.class, thrown.getCause());
+        assertTrue(thrown.getMessage().contains("'name'"));
+    }
+
+    @Test void errorsFromGettersPropagateUnwrapped() {
+        var spec = SearchSpecification.builder(IdentityDimension.of(BrokenInvariant.class, "id", (BrokenInvariant b) -> b.id))
+            .prefix("name")
+            .build();
+        var cache = ZDCache.builder().build();
+
+        var thrown = assertThrows(AssertionError.class, () -> cache.put(new BrokenInvariant(), spec));
+
+        assertEquals("broken", thrown.getMessage());
+    }
+
+    @Test void plainNamedAccessorsWinAndStaticVoidOrNonBooleanMethodsAreSkipped() {
+        var spec = SearchSpecification.builder(IdentityDimension.of(Gadget.class, "id", (Gadget g) -> g.id))
+            .exact("code")
+            .exact("label")
+            .exact("model")
+            .build();
+        var cache = ZDCache.builder().build();
+        cache.put(new Gadget(1, "x1", "red", "mk2"), spec);
+
+        assertEquals(1, cache.search(Gadget.class, "code", "plain-x1").size());
+        assertEquals(1, cache.search(Gadget.class, "label", "red").size());
+        assertEquals(1, cache.search(Gadget.class, "model", "mk2").size());
+    }
+
+    @Test void staticFieldsAreSkippedInFavourOfInheritedInstanceFields() {
+        var spec = SearchSpecification.builder(IdentityDimension.of(ShadowingItem.class, "id", (ShadowingItem i) -> i.id))
+            .exact("sku")
+            .build();
+        var cache = ZDCache.builder().build();
+        cache.put(new ShadowingItem(1, "abc"), spec);
+
+        assertEquals(1, cache.search(ShadowingItem.class, "sku", "abc").size());
+        assertTrue(cache.search(ShadowingItem.class, "sku", "static").isEmpty());
+    }
+
+    @Test void boxedBooleanIsGettersAreRead() {
+        var spec = SearchSpecification.builder(IdentityDimension.of(Gadget.class, "id", (Gadget g) -> g.id))
+            .exact("archived")
+            .build();
+        var cache = ZDCache.builder().build();
+        cache.put(new Gadget(1, "x1", "red", "mk2"), spec);
+
+        assertEquals(1, cache.search(Gadget.class, "archived", true).size());
+    }
+
+    @Test void compoundsInsideEachReadPropertiesOfTheElements() {
+        var spec = SearchSpecification.builder(PERSON_ID)
+            .each("addresses", address -> address.compound("place", c -> c.exact("country").exact("city")))
+            .build();
+        var cache = ZDCache.builder().build();
+        cache.put(new Person(1L, "Simon", "Oslo", 29, List.of(), List.of(new Address("Norway", "Bergen"))), spec);
+
+        assertEquals(List.of(1L), personIds(cache.search(Person.class, "addresses.place", "Norway", "Bergen")));
+        assertTrue(cache.search(Person.class, "addresses.place", "Norway", "Oslo").isEmpty());
     }
 }

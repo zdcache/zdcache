@@ -12,6 +12,14 @@ public interface IdentityStoreFactory {
         };
     }
 
+    static IdentityStoreFactory bufferedLru() {
+        return new IdentityStoreFactory() {
+            @Override public <ID, T> IdentityStore<ID, T> create(int maximumSize) {
+                return new IdentityStoreBufferedLru<>(maximumSize);
+            }
+        };
+    }
+
     static IdentityStoreFactory caffeine() {
         requireCaffeineOnClasspath();
         return new IdentityStoreFactory() {

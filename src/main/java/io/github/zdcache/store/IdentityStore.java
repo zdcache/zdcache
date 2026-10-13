@@ -2,6 +2,7 @@ package io.github.zdcache.store;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /**
  * Per-type identity store SPI. All calls are serialized by TypeCache's external lock.
@@ -16,6 +17,11 @@ public interface IdentityStore<ID, T> {
     Map<ID, IndexedEntry<T>> snapshot();
     boolean contains(ID id);
     int size();
+    void clear();
+    ID mostRecentlyAccessed(Predicate<? super T> matching);
+    ID leastRecentlyAccessed(Predicate<? super T> matching);
     void settle();
     List<EvictedEntry<ID, T>> drainEvictions();
+
+    default boolean concurrent() { return false; }
 }

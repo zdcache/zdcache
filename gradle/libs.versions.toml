@@ -1,10 +1,24 @@
 [versions]
+cache2k = "2.6.1.Final"
 caffeine = "3.2.4"
+cqengine = "3.6.0"
+guava = "33.7.2-jre"
+jackson = "2.22.3"
+jmh = "1.37"
+jol = "0.17"
 junit = "5.12.2"
 maven-publish = "0.37.0"
 
 [libraries]
+cache2k-api = { module = "org.cache2k:cache2k-api", version.ref = "cache2k" }
+cache2k-core = { module = "org.cache2k:cache2k-core", version.ref = "cache2k" }
 caffeine = { module = "com.github.ben-manes.caffeine:caffeine", version.ref = "caffeine" }
+cqengine = { module = "com.googlecode.cqengine:cqengine", version.ref = "cqengine" }
+guava = { module = "com.google.guava:guava", version.ref = "guava" }
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+jmh-core = { module = "org.openjdk.jmh:jmh-core", version.ref = "jmh" }
+jmh-generator = { module = "org.openjdk.jmh:jmh-generator-annprocess", version.ref = "jmh" }
+jol-core = { module = "org.openjdk.jol:jol-core", version.ref = "jol" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
 
 [plugins]
