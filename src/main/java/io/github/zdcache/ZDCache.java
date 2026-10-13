@@ -21,15 +21,18 @@ public final class ZDCache {
     private final Map<Class<?>, TypeCache<?, ?>> types = new ConcurrentHashMap<>();
     private final Map<Class<?>, TypeRedirect<?>> redirects = new ConcurrentHashMap<>();
     private final Map<Class<?>, TypeCache<?, ?>> resolved = new ConcurrentHashMap<>();
+    private volatile Specified lastSpecified;
     private final Object registry = new Object();
     private final int defaultMaxPerType;
     private final Map<Class<?>, Integer> capacities;
     private final IdentityStoreFactory stores;
+    private final Recency recency;
 
     private ZDCache(Builder builder) {
         defaultMaxPerType = builder.defaultMaxPerType;
         capacities = Map.copyOf(builder.capacities);
         stores = builder.stores;
+        recency = builder.recency;
     }
 
     public static Builder builder() { return new Builder(); }
@@ -38,6 +41,7 @@ public final class ZDCache {
         private int defaultMaxPerType = 10_000;
         private final Map<Class<?>, Integer> capacities = new HashMap<>();
         private IdentityStoreFactory stores = IdentityStoreFactory.bufferedLru();
+        private Recency recency;
 
         public Builder defaultMaxPerType(int maximum) {
             positive(maximum);
@@ -55,7 +59,18 @@ public final class ZDCache {
             return this;
         }
 
-        public ZDCache build() { return new ZDCache(this); }
+        public Builder recency(Recency recency) {
+            this.recency = Objects.requireNonNull(recency);
+            return this;
+        }
+
+        public ZDCache build() {
+            if (recency != null && !stores.recencies().contains(recency)) {
+                throw new IllegalArgumentException("The identity store supports " + stores.recencies()
+                    + " recency, not " + recency);
+            }
+            return new ZDCache(this);
+        }
         private static int positive(int n) {
             if (n <= 0) throw new IllegalArgumentException("Capacity must be positive");
             return n;
@@ -67,10 +82,18 @@ public final class ZDCache {
         return (TypeCache<T, ID>) types.get(type);
     }
 
+    private record Specified(Class<?> type, TypeCache<?, ?> cache) {}
+
     @SuppressWarnings("unchecked")
     private <T, ID> TypeCache<T, ID> resolve(Class<?> type) {
+        Specified last = lastSpecified;
+        if (last != null && last.type() == type) return (TypeCache<T, ID>) last.cache();
         TypeCache<?, ?> cache = types.get(type);
-        if (cache == null) cache = resolved.get(type);
+        if (cache != null) {
+            lastSpecified = new Specified(type, cache);
+            return (TypeCache<T, ID>) cache;
+        }
+        cache = resolved.get(type);
         if (cache == null) cache = resolveAndRemember(type);
         return (TypeCache<T, ID>) cache;
     }
@@ -138,8 +161,9 @@ public final class ZDCache {
             if (redirects.containsKey(type)) throw new ConflictingSearchSpecificationException(type);
             TypeCache<?, ?> cache = types.get(type);
             if (cache == null) {
+                int capacity = capacities.getOrDefault(type, defaultMaxPerType);
                 cache = new TypeCache<>(specification,
-                    stores.create(capacities.getOrDefault(type, defaultMaxPerType)));
+                    recency == null ? stores.create(capacity) : stores.create(capacity, recency));
                 types.put(type, cache);
                 resolved.clear();
             }

@@ -3,6 +3,7 @@ package io.github.zdcache.bench;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import io.github.zdcache.IdentityDimension;
+import io.github.zdcache.Recency;
 import io.github.zdcache.SearchSpecification;
 import io.github.zdcache.ValueRange;
 import io.github.zdcache.ZDCache;
@@ -33,13 +34,16 @@ public final class Subjects {
     public static final String ZDCACHE_LHM_INDEXED_LAMBDA = "zdcache-lhm-indexed-lambda";
     public static final String ZDCACHE_BUFFERED_KEYS = "zdcache-buffered-keys";
     public static final String ZDCACHE_BUFFERED_INDEXED = "zdcache-buffered-indexed";
+    public static final String ZDCACHE_APPROXIMATE_KEYS = "zdcache-approximate-keys";
+    public static final String ZDCACHE_APPROXIMATE_INDEXED = "zdcache-approximate-indexed";
     public static final String GUAVA = "guava";
     public static final String CACHE2K = "cache2k";
     public static final String CQENGINE = "cqengine";
 
     public static final List<String> ALL = List.of(CAFFEINE, ZDCACHE_LHM_KEYS, ZDCACHE_CAFFEINE_KEYS,
         ZDCACHE_LHM_INDEXED, ZDCACHE_CAFFEINE_INDEXED, ZDCACHE_LHM_INDEXED_LAMBDA,
-        ZDCACHE_BUFFERED_KEYS, ZDCACHE_BUFFERED_INDEXED, GUAVA, CACHE2K, CQENGINE);
+        ZDCACHE_BUFFERED_KEYS, ZDCACHE_BUFFERED_INDEXED, ZDCACHE_APPROXIMATE_KEYS, ZDCACHE_APPROXIMATE_INDEXED,
+        GUAVA, CACHE2K, CQENGINE);
     public static final List<String> SEARCHABLE = List.of(CAFFEINE, ZDCACHE_LHM_INDEXED, ZDCACHE_CAFFEINE_INDEXED,
         ZDCACHE_BUFFERED_INDEXED, GUAVA, CACHE2K, CQENGINE);
 
@@ -61,6 +65,8 @@ public final class Subjects {
             case ZDCACHE_LHM_INDEXED_LAMBDA -> zdcache(IdentityStoreFactory.linkedHashMap(), capacity, lambdas());
             case ZDCACHE_BUFFERED_KEYS -> zdcache(IdentityStoreFactory.bufferedLru(), capacity, keysOnly());
             case ZDCACHE_BUFFERED_INDEXED -> zdcache(IdentityStoreFactory.bufferedLru(), capacity, reflective());
+            case ZDCACHE_APPROXIMATE_KEYS -> zdcache(IdentityStoreFactory.bufferedLru(), Recency.APPROXIMATE, capacity, keysOnly());
+            case ZDCACHE_APPROXIMATE_INDEXED -> zdcache(IdentityStoreFactory.bufferedLru(), Recency.APPROXIMATE, capacity, reflective());
             case GUAVA -> new GuavaSubject(capacity);
             case CACHE2K -> new Cache2kSubject(capacity);
             case CQENGINE -> new CQEngineSubject();
@@ -91,7 +97,16 @@ public final class Subjects {
     }
 
     private static CacheSubject zdcache(IdentityStoreFactory stores, int capacity, SearchSpecification<Person, Long> spec) {
-        ZDCache cache = ZDCache.builder().defaultMaxPerType(capacity).identityStore(stores).build();
+        return zdcache(ZDCache.builder().identityStore(stores), capacity, spec);
+    }
+
+    private static CacheSubject zdcache(IdentityStoreFactory stores, Recency recency, int capacity,
+                                        SearchSpecification<Person, Long> spec) {
+        return zdcache(ZDCache.builder().identityStore(stores).recency(recency), capacity, spec);
+    }
+
+    private static CacheSubject zdcache(ZDCache.Builder builder, int capacity, SearchSpecification<Person, Long> spec) {
+        ZDCache cache = builder.defaultMaxPerType(capacity).build();
         cache.register(spec);
         return new ZDCacheSubject(cache);
     }

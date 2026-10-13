@@ -1,8 +1,22 @@
 package io.github.zdcache.store;
 
+import io.github.zdcache.Recency;
+import java.util.Set;
+
 /** Allows swapping implementations without changing the search engine. */
 public interface IdentityStoreFactory {
     <ID, T> IdentityStore<ID, T> create(int maxEntriesPerType);
+
+    default Set<Recency> recencies() {
+        return Set.of(Recency.STRICT);
+    }
+
+    default <ID, T> IdentityStore<ID, T> create(int maxEntriesPerType, Recency recency) {
+        if (!recencies().contains(recency)) {
+            throw new IllegalArgumentException("This identity store supports " + recencies() + " recency, not " + recency);
+        }
+        return create(maxEntriesPerType);
+    }
 
     static IdentityStoreFactory linkedHashMap() {
         return new IdentityStoreFactory() {
@@ -17,6 +31,14 @@ public interface IdentityStoreFactory {
             @Override public <ID, T> IdentityStore<ID, T> create(int maximumSize) {
                 return new IdentityStoreBufferedLru<>(maximumSize);
             }
+
+            @Override public Set<Recency> recencies() {
+                return Set.of(Recency.STRICT, Recency.APPROXIMATE);
+            }
+
+            @Override public <ID, T> IdentityStore<ID, T> create(int maximumSize, Recency recency) {
+                return new IdentityStoreBufferedLru<>(maximumSize, recency);
+            }
         };
     }
 
@@ -25,6 +47,10 @@ public interface IdentityStoreFactory {
         return new IdentityStoreFactory() {
             @Override public <ID, T> IdentityStore<ID, T> create(int maximumSize) {
                 return new IdentityStoreCaffeine<>(maximumSize);
+            }
+
+            @Override public Set<Recency> recencies() {
+                return Set.of(Recency.APPROXIMATE);
             }
         };
     }
