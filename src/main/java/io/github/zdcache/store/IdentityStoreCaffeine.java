@@ -89,6 +89,8 @@ public final class IdentityStoreCaffeine<ID, T> implements IdentityStore<ID, T> 
 
     @Override public boolean concurrent() { return true; }
 
+    @Override public boolean concurrentWrites() { return true; }
+
     @Override public List<EvictedEntry<ID, T>> drainEvictions() {
         List<EvictedEntry<ID, T>> result = new ArrayList<>();
         EvictedEntry<ID, T> event;

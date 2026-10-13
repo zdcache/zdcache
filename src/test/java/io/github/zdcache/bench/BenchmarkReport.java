@@ -34,6 +34,8 @@ public final class BenchmarkReport {
     private static final List<Row> LIBRARIES = List.of(
         new Row(Subjects.ZDCACHE_BUFFERED_KEYS, "zdcache"),
         new Row(Subjects.ZDCACHE_BUFFERED_INDEXED, "zdcache, 4 indexes"),
+        new Row(Subjects.ZDCACHE_APPROXIMATE_KEYS, "zdcache, approximate recency"),
+        new Row(Subjects.ZDCACHE_APPROXIMATE_INDEXED, "zdcache, approximate, 4 indexes"),
         new Row(Subjects.CAFFEINE, "Caffeine"),
         new Row(Subjects.CACHE2K, "cache2k"),
         new Row(Subjects.GUAVA, "Guava"),

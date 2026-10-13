@@ -18,6 +18,7 @@ public class ConcurrentBenchmark {
     @Param({Subjects.CAFFEINE, Subjects.ZDCACHE_LHM_KEYS, Subjects.ZDCACHE_CAFFEINE_KEYS,
             Subjects.ZDCACHE_LHM_INDEXED, Subjects.ZDCACHE_CAFFEINE_INDEXED,
             Subjects.ZDCACHE_BUFFERED_KEYS, Subjects.ZDCACHE_BUFFERED_INDEXED,
+            Subjects.ZDCACHE_APPROXIMATE_KEYS, Subjects.ZDCACHE_APPROXIMATE_INDEXED,
             Subjects.GUAVA, Subjects.CACHE2K, Subjects.CQENGINE})
     String subject;
 
