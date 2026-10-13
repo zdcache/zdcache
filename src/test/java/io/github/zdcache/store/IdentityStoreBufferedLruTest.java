@@ -181,9 +181,17 @@ class IdentityStoreBufferedLruTest {
     }
 
     @Test void concurrentReadsAndWritesKeepTheOrderAndTheEntriesInAgreement() throws Exception {
+        concurrentReadsAndWrites(io.github.zdcache.Recency.STRICT);
+    }
+
+    @Test void approximateConcurrentReadsAndWritesKeepTheOrderAndTheEntriesInAgreement() throws Exception {
+        concurrentReadsAndWrites(io.github.zdcache.Recency.APPROXIMATE);
+    }
+
+    private static void concurrentReadsAndWrites(io.github.zdcache.Recency recency) throws Exception {
         int capacity = 100;
         int ids = 1_000;
-        var store = new IdentityStoreBufferedLru<Integer, String>(capacity);
+        var store = new IdentityStoreBufferedLru<Integer, String>(capacity, recency);
         var start = new CountDownLatch(1);
         ExecutorService pool = Executors.newFixedThreadPool(8);
         List<Future<?>> tasks = new ArrayList<>();
@@ -309,5 +317,69 @@ class IdentityStoreBufferedLruTest {
         assertTrue(new IdentityStoreBufferedLru<Integer, String>(3, io.github.zdcache.Recency.APPROXIMATE).concurrentWrites());
         assertTrue(new IdentityStoreCaffeine<Integer, String>(3).concurrentWrites());
         assertFalse(new IdentityStoreLinkedHashMap<Integer, String>(3).concurrentWrites());
+    }
+
+    @Test void approximatePutsAreVisibleBeforeTheyAreLinked() throws Exception {
+        var store = new IdentityStoreBufferedLru<Integer, String>(3, io.github.zdcache.Recency.APPROXIMATE);
+        for (int id = 1; id <= 3; id++) store.put(id, entry("v" + id));
+        var held = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        Thread holder = holding(lockOf(store), held, release);
+        held.await();
+
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> {
+            assertNull(store.put(4, entry("v4")));
+            assertEquals("v1", store.put(1, entry("new")).entity());
+        });
+        assertEquals("v4", store.get(4).entity());
+        assertEquals("new", store.peek(1).entity());
+        assertTrue(store.contains(4));
+        assertEquals(4, store.size());
+
+        release.countDown();
+        holder.join();
+        store.settle();
+        assertEquals(3, store.size());
+        assertEquals(1, store.drainEvictions().size());
+        assertEquals(3, lruOrder(store).size());
+    }
+
+    @Test void approximateWritersHelpDrainOnceTheWriteBufferIsFull() throws Exception {
+        int capacity = 10;
+        var store = new IdentityStoreBufferedLru<Integer, String>(capacity, io.github.zdcache.Recency.APPROXIMATE);
+        var held = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        Thread holder = holding(lockOf(store), held, release);
+        held.await();
+
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> {
+            for (int id = 0; id < IdentityStoreBufferedLru.WRITE_BUFFER_LIMIT; id++) store.put(id, entry("v" + id));
+        });
+        Thread overflowing = new Thread(() -> store.put(-1, entry("over")));
+        overflowing.start();
+        overflowing.join(300);
+        assertTrue(overflowing.isAlive());
+
+        release.countDown();
+        holder.join();
+        overflowing.join(5_000);
+        assertFalse(overflowing.isAlive());
+        store.settle();
+        assertEquals(capacity, store.size());
+        assertEquals(capacity, lruOrder(store).size());
+        assertEquals(IdentityStoreBufferedLru.WRITE_BUFFER_LIMIT + 1 - capacity, store.drainEvictions().size());
+    }
+
+    @Test void approximateEvictionsAreExactWithoutContention() {
+        var store = new IdentityStoreBufferedLru<Integer, String>(2, io.github.zdcache.Recency.APPROXIMATE);
+        store.put(1, entry("v1"));
+        store.put(2, entry("v2"));
+        store.get(1);
+
+        store.put(3, entry("v3"));
+
+        assertEquals(List.of(2), evicted(store));
+        assertEquals(List.of(1, 3), lruOrder(store));
+        assertTrue(store.drainEvictions().isEmpty());
     }
 }

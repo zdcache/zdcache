@@ -52,7 +52,7 @@ class RecencyConfigurationTest {
         }
     }
 
-    @Test void approximateRecencyIsExactWithoutContention() {
+    @Test void approximateRecencyKeepsWhatIsReadAndSettlesWithinCapacity() {
         var cache = threeBooks(ZDCache.builder().recency(Recency.APPROXIMATE));
         for (int i = 0; i < 1_000; i++) {
             cache.get(Book.class, 2L);
@@ -61,8 +61,9 @@ class RecencyConfigurationTest {
 
         cache.put(new Book(4, "Book 4"));
 
+        assertEquals(3, cache.size(Book.class));
         assertFalse(cache.contains(Book.class, 3L));
-        Long least = cache.leastRecentlyAccessedId(Book.class);
-        assertEquals(2L, least);
+        assertTrue(cache.contains(Book.class, 1L));
+        assertTrue(cache.contains(Book.class, 2L));
     }
 }
