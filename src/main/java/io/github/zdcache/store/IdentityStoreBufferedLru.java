@@ -1,6 +1,8 @@
 package io.github.zdcache.store;
 
 import io.github.zdcache.Recency;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -10,6 +12,8 @@ import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
@@ -22,17 +26,36 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     private static final int DRAIN_THRESHOLD = STRIPE_CAPACITY / 2;
     private static final int WRITER_SPINS = 1_000;
     private static final int MAX_STRIPES = 128;
+    static final int WRITE_BUFFER_LIMIT = 1_024;
+    private static final byte NEW = 0;
+    private static final byte LINKED = 1;
+    private static final byte DEAD = 2;
 
     private static final class Node<ID, T> {
         final ID id;
         volatile IndexedEntry<T> entry;
         Node<ID, T> prev;
         Node<ID, T> next;
-        boolean unlinked;
+        byte state = NEW;
 
         Node(ID id, IndexedEntry<T> entry) {
             this.id = id;
             this.entry = entry;
+        }
+
+        @SuppressWarnings("unchecked")
+        IndexedEntry<T> swap(IndexedEntry<T> replacement) {
+            return (IndexedEntry<T>) ENTRY.getAndSet(this, replacement);
+        }
+    }
+
+    private static final VarHandle ENTRY;
+
+    static {
+        try {
+            ENTRY = MethodHandles.lookup().findVarHandle(Node.class, "entry", IndexedEntry.class);
+        } catch (ReflectiveOperationException e) {
+            throw new ExceptionInInitializerError(e);
         }
     }
 
@@ -62,8 +85,12 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     private final ReentrantLock lock = new ReentrantLock();
     private final AtomicInteger writersWaiting = new AtomicInteger();
     private final Queue<EvictedEntry<ID, T>> evictions = new ConcurrentLinkedQueue<>();
+    private final Queue<Node<ID, T>> pendingLinks = new ConcurrentLinkedQueue<>();
+    private final AtomicInteger pendingWrites = new AtomicInteger();
+    private final AtomicInteger size = new AtomicInteger();
+    private final AtomicBoolean replayScheduled = new AtomicBoolean();
     private final boolean approximate;
-    private volatile int size;
+
 
     public IdentityStoreBufferedLru(int maximumSize) {
         this(maximumSize, Recency.STRICT);
@@ -93,6 +120,41 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     }
 
     @Override public IndexedEntry<T> put(ID id, IndexedEntry<T> entry) {
+        return approximate ? putBuffered(id, entry) : putInOrder(id, entry);
+    }
+
+    private IndexedEntry<T> putBuffered(ID id, IndexedEntry<T> entry) {
+        Node<ID, T> node;
+        for (;;) {
+            Node<ID, T> existing = nodes.get(id);
+            if (existing != null) {
+                IndexedEntry<T> previous = existing.swap(entry);
+                if (nodes.get(id) == existing) {
+                    recordAccess(existing);
+                    return previous;
+                }
+                continue;
+            }
+            node = new Node<>(id, entry);
+            if (nodes.putIfAbsent(id, node) == null) break;
+        }
+        size.incrementAndGet();
+        pendingLinks.add(node);
+        if (pendingWrites.incrementAndGet() > WRITE_BUFFER_LIMIT) {
+            lockAsWriter();
+            try {
+                maintain();
+            } finally { lock.unlock(); }
+        }
+        while (!pendingLinks.isEmpty() && writersWaiting.get() == 0 && lock.tryLock()) {
+            try {
+                maintain();
+            } finally { lock.unlock(); }
+        }
+        return null;
+    }
+
+    private IndexedEntry<T> putInOrder(ID id, IndexedEntry<T> entry) {
         lockAsWriter();
         try {
             Stripe own = stripes.get(stripeIndex());
@@ -104,18 +166,13 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
                 moveToMostRecent(node);
                 return previous;
             }
-            if (size >= maximumSize) drainAll();
+            if (size.get() >= maximumSize) drainAll();
             node = new Node<>(id, entry);
             nodes.put(id, node);
             attachLast(node);
-            size++;
-            while (size > maximumSize) {
-                Node<ID, T> victim = head.next;
-                nodes.remove(victim.id);
-                discard(victim);
-                victim.entry.markEvicted();
-                evictions.add(new EvictedEntry<>(victim.id, victim.entry));
-            }
+            node.state = LINKED;
+            size.incrementAndGet();
+            evictOverflow();
             return null;
         } finally { lock.unlock(); }
     }
@@ -123,8 +180,10 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     @Override public IndexedEntry<T> remove(ID id) {
         lockAsWriter();
         try {
+            linkPending();
             Node<ID, T> node = nodes.remove(id);
             if (node == null) return null;
+            size.decrementAndGet();
             discard(node);
             return node.entry;
         } finally { lock.unlock(); }
@@ -133,7 +192,7 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     @Override public Map<ID, IndexedEntry<T>> snapshot() {
         lockAsWriter();
         try {
-            drainAll();
+            maintain();
             Map<ID, IndexedEntry<T>> copy = new LinkedHashMap<>();
             for (Node<ID, T> node = head.next; node != head; node = node.next) copy.put(node.id, node.entry);
             return copy;
@@ -142,24 +201,29 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
 
     @Override public boolean contains(ID id) { return nodes.containsKey(id); }
 
-    @Override public int size() { return size; }
+    @Override public int size() { return size.get(); }
 
     @Override public void clear() {
         lockAsWriter();
         try {
-            for (Node<ID, T> node = head.next; node != head; node = node.next) node.unlinked = true;
+            linkPending();
+            for (Node<ID, T> node : nodes.values()) {
+                if (nodes.remove(node.id, node)) {
+                    size.decrementAndGet();
+                    node.state = DEAD;
+                }
+            }
+            for (Node<ID, T> node = head.next; node != head; node = node.next) node.state = DEAD;
             head.prev = head;
             head.next = head;
-            nodes.clear();
             evictions.clear();
-            size = 0;
         } finally { lock.unlock(); }
     }
 
     @Override public ID mostRecentlyAccessed(Predicate<? super T> matching) {
         lockAsWriter();
         try {
-            drainAll();
+            maintain();
             for (Node<ID, T> node = head.prev; node != head; node = node.prev) {
                 if (matching.test(node.entry.entity())) return node.id;
             }
@@ -170,7 +234,7 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     @Override public ID leastRecentlyAccessed(Predicate<? super T> matching) {
         lockAsWriter();
         try {
-            drainAll();
+            maintain();
             for (Node<ID, T> node = head.next; node != head; node = node.next) {
                 if (matching.test(node.entry.entity())) return node.id;
             }
@@ -181,7 +245,7 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     @Override public void settle() {
         lockAsWriter();
         try {
-            drainAll();
+            maintain();
         } finally { lock.unlock(); }
     }
 
@@ -199,16 +263,18 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
 
     private void recordAccess(Node<ID, T> node) {
         Stripe stripe = stripe();
-        if (!stripe.offer(node)) {
-            if (approximate) {
-                if (writersWaiting.get() == 0 && lock.tryLock()) {
-                    try {
-                        drain(stripe);
-                        moveToMostRecent(node);
-                    } finally { lock.unlock(); }
-                }
-                return;
+        if (approximate) {
+            if (stripe.offer(node)) {
+                if (stripe.pending() >= DRAIN_THRESHOLD) scheduleReplay();
+            } else if (writersWaiting.get() == 0 && lock.tryLock()) {
+                try {
+                    drain(stripe);
+                    moveToMostRecent(node);
+                } finally { lock.unlock(); }
             }
+            return;
+        }
+        if (!stripe.offer(node)) {
             while (writersWaiting.get() > 0) Thread.yield();
             lock.lock();
             try {
@@ -219,6 +285,21 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
             try {
                 drainUntilAWriterWaits(stripe);
             } finally { lock.unlock(); }
+        }
+    }
+
+    private void scheduleReplay() {
+        if (replayScheduled.compareAndSet(false, true)) ForkJoinPool.commonPool().execute(this::replay);
+    }
+
+    private void replay() {
+        try {
+            lockAsWriter();
+            try {
+                drainAll();
+            } finally { lock.unlock(); }
+        } finally {
+            replayScheduled.set(false);
         }
     }
 
@@ -247,6 +328,35 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
         long thread = Thread.currentThread().threadId();
         int hash = (int) (thread ^ (thread >>> 32)) * 0x9E3779B9;
         return (hash ^ (hash >>> 16)) & (stripes.length() - 1);
+    }
+
+    private void maintain() {
+        drainAll();
+        linkPending();
+        evictOverflow();
+    }
+
+    private void linkPending() {
+        Node<ID, T> node;
+        while ((node = pendingLinks.poll()) != null) {
+            pendingWrites.decrementAndGet();
+            if (node.state == NEW) {
+                attachLast(node);
+                node.state = LINKED;
+            }
+        }
+    }
+
+    private void evictOverflow() {
+        while (size.get() > maximumSize && head.next != head) {
+            Node<ID, T> victim = head.next;
+            if (nodes.remove(victim.id, victim)) {
+                size.decrementAndGet();
+                victim.entry.markEvicted();
+                evictions.add(new EvictedEntry<>(victim.id, victim.entry));
+            }
+            discard(victim);
+        }
     }
 
     private void drainAll() {
@@ -281,7 +391,7 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     }
 
     private void moveToMostRecent(Node<ID, T> node) {
-        if (node.unlinked || head.prev == node) return;
+        if (node.state != LINKED || head.prev == node) return;
         detach(node);
         attachLast(node);
     }
@@ -299,10 +409,11 @@ public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, 
     }
 
     private void discard(Node<ID, T> node) {
-        detach(node);
-        node.prev = null;
-        node.next = null;
-        node.unlinked = true;
-        size--;
+        if (node.state == LINKED) {
+            detach(node);
+            node.prev = null;
+            node.next = null;
+        }
+        node.state = DEAD;
     }
 }
