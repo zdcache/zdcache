@@ -382,4 +382,15 @@ class IdentityStoreBufferedLruTest {
         assertEquals(List.of(1, 3), lruOrder(store));
         assertTrue(store.drainEvictions().isEmpty());
     }
+
+    @Test void approximateReadsFromOneThreadAreReplayedInOrderWithoutContention() {
+        var store = new IdentityStoreBufferedLru<Integer, String>(3, io.github.zdcache.Recency.APPROXIMATE);
+        for (int id = 1; id <= 3; id++) store.put(id, entry("v" + id));
+        for (int i = 0; i < 10 * IdentityStoreBufferedLru.STRIPE_CAPACITY; i++) {
+            store.get(2);
+            store.get(1);
+        }
+
+        assertEquals(List.of(3, 2, 1), lruOrder(store));
+    }
 }
