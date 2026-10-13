@@ -1,19 +1,65 @@
 package io.github.zdcache.index;
 
-import java.util.HashMap;
-import java.util.LinkedHashSet;
+import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
+import java.util.function.Consumer;
 
-/** Prefix Trie. Per-node reference counts support multiple matching values for one root ID. */
+/** Compressed prefix trie; IDs are stored only at the node where a value ends. */
 public final class PrefixTrieIndex<ID> implements DimensionIndex<ID> {
-    private final Node<ID> root = new Node<>();
+    private static final char[] NO_KEYS = new char[0];
+    private static final Node[] NO_CHILDREN = new Node[0];
 
-    private static final class Node<ID> {
-        final Map<Character, Node<ID>> children = new HashMap<>();
-        final Map<ID, Integer> counts = new HashMap<>();
+    private static final class Node {
+        String edge;
+        char[] keys = NO_KEYS;
+        Node[] children = NO_CHILDREN;
+        Object ids;
+
+        Node(String edge) { this.edge = edge; }
+
+        int slot(char key) { return Arrays.binarySearch(keys, key); }
+
+        void insert(Node child) {
+            int at = -slot(child.edge.charAt(0)) - 1;
+            char[] nextKeys = new char[keys.length + 1];
+            Node[] nextChildren = new Node[children.length + 1];
+            System.arraycopy(keys, 0, nextKeys, 0, at);
+            System.arraycopy(children, 0, nextChildren, 0, at);
+            nextKeys[at] = child.edge.charAt(0);
+            nextChildren[at] = child;
+            System.arraycopy(keys, at, nextKeys, at + 1, keys.length - at);
+            System.arraycopy(children, at, nextChildren, at + 1, children.length - at);
+            keys = nextKeys;
+            children = nextChildren;
+        }
+
+        void delete(int at) {
+            if (children.length == 1) {
+                keys = NO_KEYS;
+                children = NO_CHILDREN;
+                return;
+            }
+            char[] nextKeys = new char[keys.length - 1];
+            Node[] nextChildren = new Node[children.length - 1];
+            System.arraycopy(keys, 0, nextKeys, 0, at);
+            System.arraycopy(children, 0, nextChildren, 0, at);
+            System.arraycopy(keys, at + 1, nextKeys, at, keys.length - at - 1);
+            System.arraycopy(children, at + 1, nextChildren, at, children.length - at - 1);
+            keys = nextKeys;
+            children = nextChildren;
+        }
+
+        void absorbOnlyChild() {
+            Node child = children[0];
+            edge = edge + child.edge;
+            keys = child.keys;
+            children = child.children;
+            ids = child.ids;
+        }
     }
+
+    private final Node root = new Node("");
 
     private static String normalized(Object value) {
         if (!(value instanceof String s)) {
@@ -22,50 +68,91 @@ public final class PrefixTrieIndex<ID> implements DimensionIndex<ID> {
         return s.toLowerCase(Locale.ROOT);
     }
 
-    @Override public void add(ID id, Object value) {
-        String text = normalized(value);
-        Node<ID> node = root;
-        increment(node, id);
-        for (int i = 0; i < text.length(); i++) {
-            node = node.children.computeIfAbsent(text.charAt(i), ignored -> new Node<>());
-            increment(node, id);
-        }
+    private static int common(String edge, String text, int from) {
+        int max = Math.min(edge.length(), text.length() - from);
+        int i = 0;
+        while (i < max && edge.charAt(i) == text.charAt(from + i)) i++;
+        return i;
     }
 
-    private void increment(Node<ID> node, ID id) {
-        node.counts.merge(id, 1, Integer::sum);
+    @Override public void add(ID id, Object value) {
+        String text = normalized(value);
+        Node node = root;
+        int i = 0;
+        while (i < text.length()) {
+            int slot = node.slot(text.charAt(i));
+            if (slot < 0) {
+                Node leaf = new Node(text.substring(i));
+                leaf.ids = id;
+                node.insert(leaf);
+                return;
+            }
+            Node child = node.children[slot];
+            int shared = common(child.edge, text, i);
+            if (shared < child.edge.length()) {
+                Node split = new Node(child.edge.substring(0, shared));
+                child.edge = child.edge.substring(shared);
+                split.insert(child);
+                node.children[slot] = split;
+                child = split;
+            }
+            node = child;
+            i += shared;
+        }
+        node.ids = Ids.add(node.ids, id);
     }
 
     @Override public void remove(ID id, Object value) {
         String text = normalized(value);
-        Node<ID> node = root;
-        if (!node.counts.containsKey(id)) return;
-        decrement(node, id);
-        for (int i = 0; i < text.length(); i++) {
-            Node<ID> child = node.children.get(text.charAt(i));
-            if (child == null) return;
-            decrement(child, id);
-            if (child.counts.isEmpty()) {
-                node.children.remove(text.charAt(i));
-                return;
-            }
+        Node parent = null;
+        int parentSlot = -1;
+        Node node = root;
+        int i = 0;
+        while (i < text.length()) {
+            int slot = node.slot(text.charAt(i));
+            if (slot < 0) return;
+            Node child = node.children[slot];
+            if (!text.startsWith(child.edge, i)) return;
+            parent = node;
+            parentSlot = slot;
             node = child;
+            i += child.edge.length();
+        }
+        node.ids = Ids.remove(node.ids, id);
+        if (node == root || node.ids != null) return;
+        if (node.children.length == 0) {
+            parent.delete(parentSlot);
+            if (parent != root && parent.ids == null && parent.children.length == 1) parent.absorbOnlyChild();
+        } else if (node.children.length == 1) {
+            node.absorbOnlyChild();
         }
     }
 
-    private void decrement(Node<ID> node, ID id) {
-        node.counts.computeIfPresent(id, (key, count) -> count == 1 ? null : count - 1);
-    }
+    @Override public boolean isEmpty() { return root.ids == null && root.children.length == 0; }
 
-    @Override public boolean isEmpty() { return root.counts.isEmpty(); }
-
-    @Override public Set<ID> search(Object query) {
+    @Override public void forEachMatch(Object query, Consumer<? super ID> action) {
         String text = normalized(query);
-        Node<ID> node = root;
-        for (int i = 0; i < text.length(); i++) {
-            node = node.children.get(text.charAt(i));
-            if (node == null) return Set.of();
+        Node node = root;
+        int i = 0;
+        while (i < text.length()) {
+            int slot = node.slot(text.charAt(i));
+            if (slot < 0) return;
+            Node child = node.children[slot];
+            int shared = common(child.edge, text, i);
+            if (i + shared == text.length()) {
+                node = child;
+                break;
+            }
+            if (shared < child.edge.length()) return;
+            node = child;
+            i += shared;
         }
-        return new LinkedHashSet<>(node.counts.keySet());
+        ArrayDeque<Node> pending = new ArrayDeque<>();
+        pending.push(node);
+        while (!pending.isEmpty()) {
+            Node next = pending.pop();
+            Ids.forEach(next.ids, action);
+            for (Node child : next.children) pending.push(child);
+        }
     }
 }

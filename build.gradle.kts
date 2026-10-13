@@ -25,6 +25,11 @@ tasks.withType<JavaCompile>().configureEach {
 dependencies {
     compileOnly(libs.caffeine)
     testImplementation(libs.caffeine)
+    testImplementation(libs.guava)
+    testImplementation(libs.cache2k.api)
+    testRuntimeOnly(libs.cache2k.core)
+    testImplementation(libs.cqengine)
+    testImplementation(libs.jackson.databind)
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
@@ -42,11 +47,43 @@ tasks.test {
     }
 }
 
-tasks.register<JavaExec>("compareStores") {
+val jmh by sourceSets.creating {
+    compileClasspath += sourceSets.test.get().output + sourceSets.test.get().compileClasspath
+    runtimeClasspath += output + compileClasspath + sourceSets.test.get().runtimeClasspath
+}
+
+dependencies {
+    "jmhImplementation"(libs.jmh.core)
+    "jmhImplementation"(libs.jol.core)
+    "jmhAnnotationProcessor"(libs.jmh.generator)
+}
+
+tasks.register<JavaExec>("jmh") {
+    description = "Runs the JMH benchmarks against Caffeine; pass JMH options with -Pjmh.args=\"...\"."
     group = "verification"
-    description = "Small non-JMH smoke comparison of both identity stores"
-    classpath = sourceSets.main.get().runtimeClasspath + configurations.compileClasspath.get()
-    mainClass.set("io.github.zdcache.benchmark.StoreComparison")
+    classpath = jmh.runtimeClasspath
+    mainClass = "org.openjdk.jmh.Main"
+    val results = layout.buildDirectory.file("reports/jmh/results.json")
+    outputs.file(results)
+    outputs.upToDateWhen { false }
+    val extra = providers.gradleProperty("jmh.args").map { it.split(" ").filter(String::isNotBlank) }.orElse(listOf())
+    argumentProviders.add(CommandLineArgumentProvider {
+        extra.get() + listOf("-rf", "json", "-rff", results.get().asFile.absolutePath)
+    })
+    doFirst { results.get().asFile.parentFile.mkdirs() }
+}
+
+tasks.register<JavaExec>("footprint") {
+    description = "Measures heap bytes per cached entry for Caffeine and ZDCache."
+    group = "verification"
+    classpath = jmh.runtimeClasspath
+    mainClass = "io.github.zdcache.bench.MemoryFootprint"
+    maxHeapSize = "4g"
+    jvmArgs("-Djdk.attach.allowAttachSelf=true", "-Djol.magicFieldOffset=true")
+    val report = layout.buildDirectory.file("reports/footprint/results.md")
+    outputs.file(report)
+    outputs.upToDateWhen { false }
+    argumentProviders.add(CommandLineArgumentProvider { listOf(report.get().asFile.absolutePath) })
 }
 
 mavenPublishing {
@@ -75,4 +112,75 @@ mavenPublishing {
             url = "https://github.com/zdcache/zdcache"
         }
     }
+}
+
+tasks.register<JavaExec>("benchmarkReport") {
+    description = "Builds the interactive benchmark report from the last JMH and footprint results."
+    group = "verification"
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass = "io.github.zdcache.bench.BenchmarkReport"
+    mustRunAfter("jmh", "footprint")
+    val jmhResults = layout.buildDirectory.file("reports/jmh/results.json")
+    val footprintResults = layout.buildDirectory.file("reports/footprint/results.json")
+    val output = layout.buildDirectory.dir("reports/zdcache-benchmark")
+    val mode = providers.gradleProperty("benchmark.mode").orElse("custom")
+    outputs.dir(output)
+    outputs.upToDateWhen { false }
+    argumentProviders.add(CommandLineArgumentProvider {
+        listOf(jmhResults.get().asFile.absolutePath, footprintResults.get().asFile.absolutePath, mode.get(),
+            output.get().asFile.absolutePath)
+    })
+}
+
+abstract class PublishBenchmarkReport : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val report: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val summary: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val runMode: RegularFileProperty
+
+    @get:OutputFile
+    abstract val publishedReport: RegularFileProperty
+
+    @get:Internal
+    abstract val readme: RegularFileProperty
+
+    @TaskAction
+    fun publish() {
+        val mode = runMode.get().asFile.readText().trim()
+        if (mode != "full") {
+            throw GradleException(
+                "Only a full benchmark run can be published, but the last run was a $mode run. Run ./benchmark -full first.")
+        }
+        val target = publishedReport.get().asFile
+        target.parentFile.mkdirs()
+        report.get().asFile.copyTo(target, overwrite = true)
+
+        val start = "<!-- benchmark-summary:start -->"
+        val end = "<!-- benchmark-summary:end -->"
+        val readmeFile = readme.get().asFile
+        val text = readmeFile.readText()
+        val from = text.indexOf(start)
+        val to = text.indexOf(end)
+        require(from >= 0 && to > from) { "README.md must contain $start and $end" }
+        val table = summary.get().asFile.readText().trim()
+        readmeFile.writeText(text.substring(0, from + start.length) + "\n" + table + "\n" + text.substring(to))
+    }
+}
+
+tasks.register<PublishBenchmarkReport>("publishBenchmarkReport") {
+    description = "Copies the last benchmark report to docs/benchmark and updates the summary in README.md."
+    group = "documentation"
+    report = layout.buildDirectory.file("reports/zdcache-benchmark/index.html")
+    summary = layout.buildDirectory.file("reports/zdcache-benchmark/summary.md")
+    runMode = layout.buildDirectory.file("reports/zdcache-benchmark/run-mode.txt")
+    publishedReport = layout.projectDirectory.file("docs/benchmark/index.html")
+    readme = layout.projectDirectory.file("README.md")
+    outputs.upToDateWhen { false }
 }

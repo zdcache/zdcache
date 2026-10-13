@@ -1,5 +1,6 @@
 package io.github.zdcache;
 
+import io.github.zdcache.internal.Getters;
 import io.github.zdcache.internal.PropertyAccess;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -104,6 +105,25 @@ public final class SearchSpecification<T, ID> {
             root.compound(name, parts); return this;
         }
 
+        public Builder<T, ID> prefix(Getter<T, String> getter) {
+            root.prefix(getter); return this;
+        }
+        public <V> Builder<T, ID> exact(Getter<T, V> getter) {
+            root.exact(getter); return this;
+        }
+        public <V extends Comparable<? super V>> Builder<T, ID> range(Getter<T, V> getter) {
+            root.range(getter); return this;
+        }
+        public <E> Builder<T, ID> each(Getter<T, ? extends Iterable<E>> getter, Consumer<PathBuilder<T, E>> nested) {
+            root.each(getter, nested); return this;
+        }
+        public <V> Builder<T, ID> exactEach(Getter<T, ? extends Iterable<V>> getter) {
+            root.exactEach(getter); return this;
+        }
+        public Builder<T, ID> prefixEach(Getter<T, ? extends Iterable<String>> getter) {
+            root.prefixEach(getter); return this;
+        }
+
         public SearchSpecification<T, ID> build() {
             return new SearchSpecification<>(identity, new ArrayList<>(dimensions.values()));
         }
@@ -150,12 +170,12 @@ public final class SearchSpecification<T, ID> {
         }
         public PathBuilder<ROOT, CURRENT> exactEach(String property) {
             String name = property(property);
-            leaf(name, IndexKind.EXACT, current -> PropertyAccess.readAll(current, name));
+            leaf(name, IndexKind.EXACT, true, current -> PropertyAccess.readAll(current, name));
             return this;
         }
         public PathBuilder<ROOT, CURRENT> prefixEach(String property) {
             String name = property(property);
-            leaf(name, IndexKind.PREFIX, current -> PropertyAccess.readAll(current, name));
+            leaf(name, IndexKind.PREFIX, true, current -> PropertyAccess.readAll(current, name));
             return this;
         }
         @SuppressWarnings("unchecked")
@@ -171,10 +191,10 @@ public final class SearchSpecification<T, ID> {
             return path.isEmpty() ? name : path + "." + name;
         }
 
-        private <V> void leaf(String name, IndexKind kind,
+        private <V> void leaf(String name, IndexKind kind, boolean multi,
                               Function<CURRENT, ? extends Iterable<V>> extractor) {
             String fullPath = child(name);
-            SearchDimension<ROOT> def = new SearchDimension<>(fullPath, kind, root -> {
+            SearchDimension<ROOT> def = new SearchDimension<>(fullPath, kind, multi || !path.isEmpty(), root -> {
                 List<V> values = new ArrayList<>();
                 for (CURRENT current : parents.apply(root)) {
                     if (current == null) continue;
@@ -192,7 +212,7 @@ public final class SearchSpecification<T, ID> {
 
         private <V> void scalar(String name, IndexKind kind, Function<CURRENT, V> extractor) {
             Objects.requireNonNull(extractor);
-            leaf(name, kind, cur -> Collections.singletonList(extractor.apply(cur)));
+            leaf(name, kind, false, cur -> Collections.singletonList(extractor.apply(cur)));
         }
 
         public PathBuilder<ROOT, CURRENT> prefix(String name, Function<CURRENT, String> extractor) {
@@ -207,12 +227,33 @@ public final class SearchSpecification<T, ID> {
         }
         public <V> PathBuilder<ROOT, CURRENT> exactEach(
                 String name, Function<CURRENT, ? extends Iterable<V>> extractor) {
-            leaf(name, IndexKind.EXACT, extractor); return this;
+            leaf(name, IndexKind.EXACT, true, extractor); return this;
         }
         public PathBuilder<ROOT, CURRENT> prefixEach(
                 String name, Function<CURRENT, ? extends Iterable<String>> extractor) {
-            leaf(name, IndexKind.PREFIX, extractor); return this;
+            leaf(name, IndexKind.PREFIX, true, extractor); return this;
         }
+
+        public PathBuilder<ROOT, CURRENT> prefix(Getter<CURRENT, String> getter) {
+            return prefix(Getters.name(getter), getter);
+        }
+        public <V> PathBuilder<ROOT, CURRENT> exact(Getter<CURRENT, V> getter) {
+            return exact(Getters.name(getter), getter);
+        }
+        public <V extends Comparable<? super V>> PathBuilder<ROOT, CURRENT> range(Getter<CURRENT, V> getter) {
+            return range(Getters.name(getter), getter);
+        }
+        public <V> PathBuilder<ROOT, CURRENT> exactEach(Getter<CURRENT, ? extends Iterable<V>> getter) {
+            return exactEach(Getters.name(getter), getter);
+        }
+        public PathBuilder<ROOT, CURRENT> prefixEach(Getter<CURRENT, ? extends Iterable<String>> getter) {
+            return prefixEach(Getters.name(getter), getter);
+        }
+        public <E> PathBuilder<ROOT, CURRENT> each(
+                Getter<CURRENT, ? extends Iterable<E>> getter, Consumer<PathBuilder<ROOT, E>> nested) {
+            return each(Getters.name(getter), getter, nested);
+        }
+
         public PathBuilder<ROOT, CURRENT> compound(String name, Consumer<CompoundBuilder<CURRENT>> declaration) {
             Objects.requireNonNull(declaration);
             String fullPath = child(name);
@@ -221,7 +262,8 @@ public final class SearchSpecification<T, ID> {
             List<CompoundBuilder.PartExtractor<CURRENT>> parts = compound.validated(fullPath);
             List<SearchDimension.Part> declared = parts.stream()
                 .map(part -> new SearchDimension.Part(part.name(), part.kind())).toList();
-            SearchDimension<ROOT> def = new SearchDimension<>(fullPath, IndexKind.COMPOUND, declared, root -> {
+            boolean multi = !path.isEmpty() || parts.stream().anyMatch(CompoundBuilder.PartExtractor::multi);
+            SearchDimension<ROOT> def = new SearchDimension<>(fullPath, IndexKind.COMPOUND, declared, multi, root -> {
                 List<List<Object>> keys = new ArrayList<>();
                 for (CURRENT current : parents.apply(root)) {
                     if (current != null) keys.addAll(CompoundBuilder.combinations(parts, current));
@@ -255,7 +297,7 @@ public final class SearchSpecification<T, ID> {
     }
 
     public static final class CompoundBuilder<E> {
-        record PartExtractor<E>(String name, IndexKind kind, Function<E, ? extends Iterable<?>> extractor) {}
+        record PartExtractor<E>(String name, IndexKind kind, boolean multi, Function<E, ? extends Iterable<?>> extractor) {}
 
         private final Class<?> type;
         private final List<PartExtractor<E>> parts = new ArrayList<>();
@@ -275,7 +317,7 @@ public final class SearchSpecification<T, ID> {
         }
         public CompoundBuilder<E> exactEach(String property) {
             String name = property(property);
-            return part(name, IndexKind.EXACT, e -> PropertyAccess.readAll(e, name));
+            return part(name, IndexKind.EXACT, true, e -> PropertyAccess.readAll(e, name));
         }
         public CompoundBuilder<E> range(String property) {
             String name = property(property);
@@ -290,7 +332,7 @@ public final class SearchSpecification<T, ID> {
             return scalar(name, IndexKind.EXACT, extractor);
         }
         public <V> CompoundBuilder<E> exactEach(String name, Function<E, ? extends Iterable<V>> extractor) {
-            return part(name, IndexKind.EXACT, extractor);
+            return part(name, IndexKind.EXACT, true, extractor);
         }
         public <V extends Comparable<? super V>> CompoundBuilder<E> range(String name, Function<E, V> extractor) {
             return scalar(name, IndexKind.RANGE, extractor);
@@ -299,16 +341,29 @@ public final class SearchSpecification<T, ID> {
             return scalar(name, IndexKind.PREFIX, extractor);
         }
 
-        private <V> CompoundBuilder<E> scalar(String name, IndexKind kind, Function<E, V> extractor) {
-            Objects.requireNonNull(extractor);
-            return part(name, kind, e -> Collections.singletonList(extractor.apply(e)));
+        public <V> CompoundBuilder<E> exact(Getter<E, V> getter) {
+            return exact(Getters.name(getter), getter);
+        }
+        public <V> CompoundBuilder<E> exactEach(Getter<E, ? extends Iterable<V>> getter) {
+            return exactEach(Getters.name(getter), getter);
+        }
+        public <V extends Comparable<? super V>> CompoundBuilder<E> range(Getter<E, V> getter) {
+            return range(Getters.name(getter), getter);
+        }
+        public CompoundBuilder<E> prefix(Getter<E, String> getter) {
+            return prefix(Getters.name(getter), getter);
         }
 
-        private CompoundBuilder<E> part(String name, IndexKind kind, Function<E, ? extends Iterable<?>> extractor) {
+        private <V> CompoundBuilder<E> scalar(String name, IndexKind kind, Function<E, V> extractor) {
+            Objects.requireNonNull(extractor);
+            return part(name, kind, false, e -> Collections.singletonList(extractor.apply(e)));
+        }
+
+        private CompoundBuilder<E> part(String name, IndexKind kind, boolean multi, Function<E, ? extends Iterable<?>> extractor) {
             if (name == null || name.isBlank() || name.contains(".")) {
                 throw new IllegalArgumentException("Compound part must be nonblank and cannot contain '.'");
             }
-            parts.add(new PartExtractor<>(name, kind, Objects.requireNonNull(extractor)));
+            parts.add(new PartExtractor<>(name, kind, multi, Objects.requireNonNull(extractor)));
             return this;
         }
 

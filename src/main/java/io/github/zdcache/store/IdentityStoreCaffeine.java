@@ -2,12 +2,16 @@ package io.github.zdcache.store;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Policy;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.stream.Stream;
 
 /**
  * Caffeine adapter with only size-based eviction. No scheduler, loader, expiry or refresh.
@@ -26,6 +30,7 @@ public final class IdentityStoreCaffeine<ID, T> implements IdentityStore<ID, T> 
             .executor(Runnable::run)
             .<ID, IndexedEntry<T>>evictionListener((id, entry, cause) -> {
                 if (id != null && entry != null) {
+                    entry.markEvicted();
                     evictions.add(new EvictedEntry<>(id, entry));
                 }
             })
@@ -53,7 +58,36 @@ public final class IdentityStoreCaffeine<ID, T> implements IdentityStore<ID, T> 
 
     @Override public int size() { return cache.asMap().size(); }
 
+    @Override public void clear() {
+        cache.invalidateAll();
+        cache.cleanUp();
+        evictions.clear();
+    }
+
+    @Override public ID mostRecentlyAccessed(Predicate<? super T> matching) {
+        return eviction().hottest(firstKey(matching));
+    }
+
+    @Override public ID leastRecentlyAccessed(Predicate<? super T> matching) {
+        return eviction().coldest(firstKey(matching));
+    }
+
+    private Policy.Eviction<ID, IndexedEntry<T>> eviction() {
+        return cache.policy().eviction().orElseThrow();
+    }
+
+    private static <ID, T> Function<Stream<Policy.CacheEntry<ID, IndexedEntry<T>>>, ID> firstKey(
+            Predicate<? super T> matching) {
+        return entries -> entries
+            .filter(entry -> matching.test(entry.getValue().entity()))
+            .map(Map.Entry::getKey)
+            .findFirst()
+            .orElse(null);
+    }
+
     @Override public void settle() { cache.cleanUp(); }
+
+    @Override public boolean concurrent() { return true; }
 
     @Override public List<EvictedEntry<ID, T>> drainEvictions() {
         List<EvictedEntry<ID, T>> result = new ArrayList<>();

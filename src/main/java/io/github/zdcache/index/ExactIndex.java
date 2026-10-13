@@ -1,28 +1,23 @@
 package io.github.zdcache.index;
 
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.Map;
-import java.util.Set;
+import java.util.function.Consumer;
 
 public final class ExactIndex<ID> implements DimensionIndex<ID> {
-    private final Map<Object, Set<ID>> idsByValue = new HashMap<>();
+    private final Map<Object, Object> idsByValue = new HashMap<>();
 
     @Override public void add(ID id, Object value) {
-        idsByValue.computeIfAbsent(value, ignored -> new LinkedHashSet<>()).add(id);
+        idsByValue.compute(value, (ignored, ids) -> Ids.add(ids, id));
     }
 
     @Override public void remove(ID id, Object value) {
-        Set<ID> ids = idsByValue.get(value);
-        if (ids != null) {
-            ids.remove(id);
-            if (ids.isEmpty()) idsByValue.remove(value);
-        }
+        idsByValue.computeIfPresent(value, (ignored, ids) -> Ids.remove(ids, id));
     }
 
     @Override public boolean isEmpty() { return idsByValue.isEmpty(); }
 
-    @Override public Set<ID> search(Object query) {
-        return new LinkedHashSet<>(idsByValue.getOrDefault(query, Set.of()));
+    @Override public void forEachMatch(Object query, Consumer<? super ID> action) {
+        Ids.forEach(idsByValue.get(query), action);
     }
 }

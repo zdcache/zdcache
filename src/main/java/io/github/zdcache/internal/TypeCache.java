@@ -8,19 +8,25 @@ import io.github.zdcache.SearchSpecification;
 import io.github.zdcache.store.IdentityStore;
 import io.github.zdcache.store.IndexedEntry;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Supplier;
 
 /** One capacity, lock, specification, store and dimension registry per root class. */
 public final class TypeCache<T, ID> {
-    private final ReentrantLock lock = new ReentrantLock();
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+    private final Lock read = lock.readLock();
+    private final Lock write = lock.writeLock();
     private final IdentityStore<ID, T> store;
-    private SearchSpecification<T, ID> specification;
-    private DimensionRegistry<T, ID> indexes;
+    private volatile SearchSpecification<T, ID> specification;
+    private volatile DimensionRegistry<T, ID> indexes;
 
     public TypeCache(SearchSpecification<T, ID> spec, IdentityStore<ID, T> store) {
         this.specification = Objects.requireNonNull(spec);
@@ -29,9 +35,7 @@ public final class TypeCache<T, ID> {
     }
 
     public SearchSpecification<T, ID> specification() {
-        lock.lock();
-        try { return specification; }
-        finally { lock.unlock(); }
+        return specification;
     }
 
     public void requireSameSpecification(SearchSpecification<T, ID> supplied) {
@@ -42,7 +46,7 @@ public final class TypeCache<T, ID> {
 
     /** Can be called without supplied spec after registration; explicit IDs are checked if extractable. */
     public void put(ID id, T entity, SearchSpecification<T, ID> suppliedOrNull) {
-        lock.lock();
+        write.lock();
         try {
             if (suppliedOrNull != null) requireSameSpecification(suppliedOrNull);
             if (!specification.type().isInstance(entity)) {
@@ -53,113 +57,166 @@ public final class TypeCache<T, ID> {
                 throw new IllegalArgumentException("Supplied ID differs from the immutable IdentityDimension");
             }
             // Preparation MUST happen before touching existing state; an extractor failure is safe.
-            Map<String, Set<Object>> next = indexes.extract(entity);
+            Object[] next = indexes.extract(entity);
             indexes.validate(next);
-            settleAndCleanup();
+            applyEvictions();
 
-            IndexedEntry<T> replacement = new IndexedEntry<>(entity, next);
-            IndexedEntry<T> previous = store.put(id, replacement);
-            store.settle();
-            boolean retained = store.contains(id);
-
-            if (previous != null) indexes.remove(id, previous.snapshot());
-            for (var evicted : store.drainEvictions()) {
-                // Remove the EXACT evicted entry snapshot. In particular, don't delete a replacement.
-                indexes.remove(evicted.id(), evicted.entry().snapshot());
-            }
-            if (retained) {
-                indexes.add(id, next);
+            IndexedEntry<T> entry = new IndexedEntry<>(entity, next);
+            IndexedEntry<T> previous = store.put(id, entry);
+            if (previous != null) indexes.remove(previous, previous.snapshot());
+            applyEvictions();
+            if (store.contains(id)) {
+                indexes.add(entry, next);
             }
         } finally {
-            lock.unlock();
+            write.unlock();
         }
     }
 
     public T get(ID id, Class<?> view) {
-        lock.lock();
+        if (store.concurrent()) return read(id, view);
+        write.lock();
         try {
-            settleAndCleanup();
+            return read(id, view);
+        } finally { write.unlock(); }
+    }
+
+    private T read(ID id, Class<?> view) {
+        if (view != specification.type()) {
             IndexedEntry<T> found = store.peek(id);
-            IndexedEntry<T> entry = found != null && view.isInstance(found.entity()) ? store.get(id) : null;
-            settleAndCleanup();
-            return entry == null ? null : entry.entity();
-        } finally { lock.unlock(); }
+            if (found == null || !view.isInstance(found.entity())) return null;
+        }
+        IndexedEntry<T> entry = store.get(id);
+        return entry == null || !view.isInstance(entry.entity()) ? null : entry.entity();
+    }
+
+    public T peek(ID id, Class<?> view) {
+        read.lock();
+        try {
+            IndexedEntry<T> entry = store.peek(id);
+            return entry == null || !view.isInstance(entry.entity()) ? null : entry.entity();
+        } finally { read.unlock(); }
+    }
+
+    public <S> List<S> values(Class<S> view) {
+        read.lock();
+        try {
+            List<S> found = new ArrayList<>();
+            for (IndexedEntry<T> entry : store.snapshot().values()) {
+                if (view.isInstance(entry.entity())) found.add(view.cast(entry.entity()));
+            }
+            return Collections.unmodifiableList(found);
+        } finally { read.unlock(); }
+    }
+
+    public void clear() {
+        clear(specification.type());
+    }
+
+    public void clear(Class<?> view) {
+        write.lock();
+        try {
+            if (view.isAssignableFrom(specification.type())) {
+                store.clear();
+                indexes = new DimensionRegistry<>(specification);
+                return;
+            }
+            applyEvictions();
+            for (var pair : store.snapshot().entrySet()) {
+                if (view.isInstance(pair.getValue().entity())) {
+                    store.remove(pair.getKey());
+                    indexes.remove(pair.getValue(), pair.getValue().snapshot());
+                }
+            }
+        } finally { write.unlock(); }
+    }
+
+    public ID mostRecentlyAccessed(Class<?> view) {
+        return settled(() -> store.mostRecentlyAccessed(view::isInstance));
+    }
+
+    public ID leastRecentlyAccessed(Class<?> view) {
+        return settled(() -> store.leastRecentlyAccessed(view::isInstance));
+    }
+
+    private ID settled(Supplier<ID> query) {
+        write.lock();
+        try {
+            store.settle();
+            applyEvictions();
+            return query.get();
+        } finally { write.unlock(); }
     }
 
     public T remove(ID id, Class<?> view) {
-        lock.lock();
+        write.lock();
         try {
-            settleAndCleanup();
+            applyEvictions();
             IndexedEntry<T> found = store.peek(id);
             if (found == null || !view.isInstance(found.entity())) return null;
             IndexedEntry<T> entry = store.remove(id);
-            if (entry != null) indexes.remove(id, entry.snapshot());
-            settleAndCleanup();
+            if (entry != null) indexes.remove(entry, entry.snapshot());
+            applyEvictions();
             return entry == null ? null : entry.entity();
-        } finally { lock.unlock(); }
+        } finally { write.unlock(); }
     }
 
-    public List<T> search(String dimension, Object... values) {
-        lock.lock();
+    public <S> List<S> search(Class<S> view, String dimension, Object... values) {
+        read.lock();
         try {
-            settleAndCleanup();
             if (!specification.searchable()) {
                 throw new MissingSearchSpecificationStrategyException(specification.type());
             }
-            Set<ID> ids = indexes.search(dimension, values);
-            Map<ID, IndexedEntry<T>> candidates = new java.util.LinkedHashMap<>();
-            for (ID id : ids) {
-                IndexedEntry<T> entry = store.peek(id);
-                if (entry != null) candidates.put(id, entry);
-            }
-            settleAndCleanup();
-            // Avoid returning a candidate evicted during Caffeine's maintenance pass.
-            List<T> objects = new ArrayList<>(candidates.size());
-            for (var candidate : candidates.entrySet()) {
-                if (store.contains(candidate.getKey())) {
-                    objects.add(candidate.getValue().entity());
-                }
-            }
-            return List.copyOf(objects);
-        } finally { lock.unlock(); }
+            DimensionRegistry<T, ID> registry = indexes;
+            Set<IndexedEntry<T>> seen = registry.multiValued(dimension)
+                ? Collections.newSetFromMap(new IdentityHashMap<>()) : null;
+            List<S> found = new ArrayList<>();
+            registry.forEachMatch(dimension, values, entry -> {
+                if (entry.evicted() || seen != null && !seen.add(entry)) return;
+                T entity = entry.entity();
+                if (view.isInstance(entity)) found.add(view.cast(entity));
+            });
+            return Collections.unmodifiableList(found);
+        } finally { read.unlock(); }
     }
 
     /** Rebuild all dimensions atomically. Never replace the registered identity instance. */
     public void updateSpecification(SearchSpecification<T, ID> nextSpecification) {
-        lock.lock();
+        write.lock();
         try {
             if (nextSpecification.identity() != specification.identity()) {
                 throw new ImmutableIdentityDimensionException(specification.type());
             }
-            settleAndCleanup();
+            store.settle();
+            applyEvictions();
             DimensionRegistry<T, ID> rebuilt = new DimensionRegistry<>(nextSpecification);
-            Map<ID, Map<String, Set<Object>>> snapshots = new HashMap<>();
+            Map<ID, Object[]> snapshots = new HashMap<>();
             Map<ID, IndexedEntry<T>> entries = store.snapshot();
             for (var pair : entries.entrySet()) {
-                Map<String, Set<Object>> newSnapshot = rebuilt.extract(pair.getValue().entity());
+                Object[] newSnapshot = rebuilt.extract(pair.getValue().entity());
                 rebuilt.validate(newSnapshot);
-                rebuilt.add(pair.getKey(), newSnapshot);
+                rebuilt.add(pair.getValue(), newSnapshot);
                 snapshots.put(pair.getKey(), newSnapshot);
             }
             // All potentially throwing extraction/indexing has succeeded; publish under type lock.
             entries.forEach((id, entry) -> entry.replaceSnapshot(snapshots.get(id)));
             indexes = rebuilt;
             specification = nextSpecification;
-        } finally { lock.unlock(); }
+        } finally { write.unlock(); }
     }
 
     public int size() {
-        lock.lock();
+        write.lock();
         try {
-            settleAndCleanup();
+            store.settle();
+            applyEvictions();
             return store.size();
-        } finally { lock.unlock(); }
+        } finally { write.unlock(); }
     }
 
-    private void settleAndCleanup() {
-        store.settle();
+    private void applyEvictions() {
         for (var evicted : store.drainEvictions()) {
-            indexes.remove(evicted.id(), evicted.entry().snapshot());
+            indexes.remove(evicted.entry(), evicted.entry().snapshot());
         }
     }
 }

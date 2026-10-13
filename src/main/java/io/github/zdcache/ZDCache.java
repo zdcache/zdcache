@@ -1,5 +1,6 @@
 package io.github.zdcache;
 
+import io.github.zdcache.internal.Getters;
 import io.github.zdcache.internal.TypeCache;
 import io.github.zdcache.store.IdentityStoreFactory;
 import java.util.HashMap;
@@ -36,7 +37,7 @@ public final class ZDCache {
     public static final class Builder {
         private int defaultMaxPerType = 10_000;
         private final Map<Class<?>, Integer> capacities = new HashMap<>();
-        private IdentityStoreFactory stores = IdentityStoreFactory.linkedHashMap();
+        private IdentityStoreFactory stores = IdentityStoreFactory.bufferedLru();
 
         public Builder defaultMaxPerType(int maximum) {
             positive(maximum);
@@ -227,13 +228,51 @@ public final class ZDCache {
         return cache == null ? null : type.cast(cache.remove(id, type));
     }
 
+    public <T, ID> T peek(Class<T> type, ID id) {
+        TypeCache<?, ID> cache = resolve(type);
+        return cache == null ? null : type.cast(cache.peek(id, type));
+    }
+
+    public <ID> boolean contains(Class<?> type, ID id) {
+        return peek(type, id) != null;
+    }
+
+    public <T> List<T> values(Class<T> type) {
+        TypeCache<?, ?> cache = resolve(type);
+        return cache == null ? List.of() : cache.values(type);
+    }
+
+    public void clear(Class<?> type) {
+        TypeCache<?, ?> cache = resolve(type);
+        if (cache != null) cache.clear(type);
+    }
+
+    public void clear() {
+        types.values().forEach(TypeCache::clear);
+    }
+
+    public <ID> ID mostRecentlyAccessedId(Class<?> type) {
+        TypeCache<?, ID> cache = resolve(type);
+        return cache == null ? null : cache.mostRecentlyAccessed(type);
+    }
+
+    public <ID> ID leastRecentlyAccessedId(Class<?> type) {
+        TypeCache<?, ID> cache = resolve(type);
+        return cache == null ? null : cache.leastRecentlyAccessed(type);
+    }
+
+    public <T> List<T> search(Getter<T, ?> dimension, Object... values) {
+        return search(Getters.<T>type(dimension), Getters.name(dimension), values);
+    }
+
+    public <T> List<T> search(Class<T> type, Getter<? super T, ?> dimension, Object... values) {
+        return search(type, Getters.name(dimension), values);
+    }
+
     public <T> List<T> search(Class<T> type, String dimension, Object... values) {
         TypeCache<?, Object> cache = resolve(type);
         if (cache == null) throw new MissingSearchSpecificationStrategyException(type);
-        return cache.search(dimension, values).stream()
-            .filter(type::isInstance)
-            .map(type::cast)
-            .toList();
+        return cache.search(type, dimension, values);
     }
 
     public <T, ID> void updateSpecification(Class<T> type, SearchSpecification<T, ID> replacement) {

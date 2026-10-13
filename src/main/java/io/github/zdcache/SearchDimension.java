@@ -14,22 +14,26 @@ public final class SearchDimension<T> {
     private final String path;
     private final IndexKind kind;
     private final List<Part> parts;
+    private final boolean multiValued;
     private final Function<T, ? extends Iterable<?>> extractor;
 
-    SearchDimension(String path, IndexKind kind, Function<T, ? extends Iterable<?>> extractor) {
-        this(path, kind, List.of(), extractor);
+    SearchDimension(String path, IndexKind kind, boolean multiValued, Function<T, ? extends Iterable<?>> extractor) {
+        this(path, kind, List.of(), multiValued, extractor);
     }
 
-    SearchDimension(String path, IndexKind kind, List<Part> parts, Function<T, ? extends Iterable<?>> extractor) {
+    SearchDimension(String path, IndexKind kind, List<Part> parts, boolean multiValued,
+                    Function<T, ? extends Iterable<?>> extractor) {
         this.path = Objects.requireNonNull(path);
         this.kind = Objects.requireNonNull(kind);
         this.parts = List.copyOf(parts);
+        this.multiValued = multiValued;
         this.extractor = Objects.requireNonNull(extractor);
     }
 
     public String path() { return path; }
     public IndexKind kind() { return kind; }
     public List<Part> parts() { return parts; }
+    public boolean multiValued() { return multiValued; }
 
     /** Extract a stable, de-duplicated snapshot of index keys. Null values are ignored. */
     public Set<Object> values(T entity) {

@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /** Strict, access-order LRU; external synchronization is mandatory. */
 public final class IdentityStoreLinkedHashMap<ID, T> implements IdentityStore<ID, T> {
@@ -29,6 +30,7 @@ public final class IdentityStoreLinkedHashMap<ID, T> implements IdentityStore<ID
         while (entries.size() > maximumSize) {
             var eldest = entries.entrySet().iterator();
             var victim = eldest.next();
+            victim.getValue().markEvicted();
             evictions.add(new EvictedEntry<>(victim.getKey(), victim.getValue()));
             eldest.remove();
         }
@@ -45,6 +47,26 @@ public final class IdentityStoreLinkedHashMap<ID, T> implements IdentityStore<ID
     @Override public boolean contains(ID id) { return entries.containsKey(id); }
 
     @Override public int size() { return entries.size(); }
+
+    @Override public void clear() {
+        entries.clear();
+        evictions.clear();
+    }
+
+    @Override public ID mostRecentlyAccessed(Predicate<? super T> matching) {
+        return first(entries.sequencedEntrySet().reversed(), matching);
+    }
+
+    @Override public ID leastRecentlyAccessed(Predicate<? super T> matching) {
+        return first(entries.sequencedEntrySet(), matching);
+    }
+
+    private static <ID, T> ID first(Iterable<Map.Entry<ID, IndexedEntry<T>>> ordered, Predicate<? super T> matching) {
+        for (var entry : ordered) {
+            if (matching.test(entry.getValue().entity())) return entry.getKey();
+        }
+        return null;
+    }
 
     @Override public void settle() { /* synchronous eviction */ }
 
