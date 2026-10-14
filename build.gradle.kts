@@ -190,7 +190,7 @@ abstract class PublishBenchmarkReport : DefaultTask() {
         val to = text.indexOf(end)
         require(from >= 0 && to > from) { "README.md must contain $start and $end" }
         val table = summary.get().asFile.readText().trim()
-        readmeFile.writeText(text.substring(0, from + start.length) + "\n" + table + "\n" + text.substring(to))
+        readmeFile.writeText(text.substring(0, from + start.length) + "\n" + table + "\n\n" + text.substring(to))
     }
 }
 

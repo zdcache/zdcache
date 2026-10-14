@@ -19,9 +19,11 @@ class DeepNestingTest {
     private static SearchSpecification<Campus, Long> spec() {
         return SearchSpecification.builder(IdentityDimension.of(Campus.class, "id", Campus::id))
             .each(Campus::faculties, faculty -> faculty
+                .exact(Faculty::name)
                 .each(Faculty::departments, department -> department
                     .exact(Department::code)
                     .each(Department::programmes, programme -> programme
+                        .exact(Programme::name)
                         .each(Programme::modules, module -> module
                             .prefix(Module::code)
                             .each(Module::lessons, lesson -> lesson
@@ -95,5 +97,30 @@ class DeepNestingTest {
         cache.remove(Campus.class, 1L);
         assertTrue(cache.search(Campus.class, LESSONS + ".room", "C-11111").isEmpty());
         assertTrue(cache.search(Campus.class, "faculties.departments.programmes.modules.code", "").isEmpty());
+    }
+
+    @Test void nestedDimensionsUpToFiveLevelsAreSearchedByAChainOfMethodReferences() {
+        var cache = ZDCache.builder().build();
+        cache.put(campus(1, 3, "A", LocalDate.of(2026, 1, 5)), spec());
+        cache.put(campus(2, 2, "B", LocalDate.of(2026, 3, 2)));
+
+        assertEquals(ids(cache.search(Campus.class, "faculties.name", "F2")),
+            ids(cache.search(Campus::faculties, Faculty::name, "F2")));
+        assertEquals(List.of(1L), ids(cache.search(Campus::faculties, Faculty::name, "F2")));
+        assertEquals(List.of(1L, 2L), ids(cache.search(Campus::faculties, Faculty::departments, Department::code, "D11")));
+        assertEquals(List.of(1L), ids(cache.search(Campus::faculties, Faculty::departments, Department::programmes,
+            Programme::name, "P222")));
+        assertEquals(List.of(1L, 2L), ids(cache.search(Campus::faculties, Faculty::departments, Department::programmes,
+            Programme::modules, Module::code, "mod11")));
+        assertEquals(ids(cache.search(Campus.class, "faculties.departments.programmes.modules.code", "mod11")),
+            ids(cache.search(Campus::faculties, Faculty::departments, Department::programmes, Programme::modules, Module::code, "mod11")));
+    }
+
+    @Test void aChainOfMethodReferencesThatIsNotADimensionFails() {
+        var cache = ZDCache.builder().build();
+        cache.put(campus(1, 2, "A", LocalDate.of(2026, 1, 5)), spec());
+
+        assertThrows(UnknownSearchDimensionException.class,
+            () -> cache.search(Campus::faculties, Faculty::departments, "D11"));
     }
 }

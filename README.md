@@ -51,31 +51,35 @@ record Person(long id, String name, int age, List<Address> addresses) {}
 var cache = ZDCache.builder()
     .defaultMaxPerType(10_000)
     .capacity(Person.class, 5_000)
-    .identityStore(IdentityStoreFactory.linkedHashMap())
     .build();
 
 // IMPORTANT: reuse this exact identity instance in replacement specifications.
 var personId = IdentityDimension.of(Person.class, "id", Person::id);
+
+// Method references name the dimensions: name, age, addresses.city and addresses.tags.
 var spec = SearchSpecification.builder(personId)
-    .prefix("name", Person::name)
-    .range("age", Person::age)
-    .each("addresses", Person::addresses, address -> address
-        .prefix("city", Address::city)
-        .exactEach("tags", Address::tags))
+    .prefix(Person::name)
+    .range(Person::age)
+    .each(Person::addresses, address -> address
+        .prefix(Address::city)
+        .exactEach(Address::tags))
     .build();
 
 cache.put(new Person(1, "Simon", 32,
     List.of(new Address("Oslo", List.of("home", "office")))), spec);
 cache.put(new Person(2, "Simone", 25, List.of()));
 
-List<Person> people = cache.search(Person.class, "name", "si");
+// The method reference gives both the type and the dimension:
+List<Person> people = cache.search(Person::name, "si");
+List<Person> aged = cache.search(Person::age, ValueRange.between(20, 40));
+// Nested dimensions by their path, as a compact string or as a chain of method references:
 List<Person> inOslo = cache.search(Person.class, "addresses.city", "os");
-List<Person> aged = cache.search(Person.class, "age", ValueRange.between(20, 40));
+List<Person> inOsloToo = cache.search(Person::addresses, Address::city, "os");
 Person one = cache.get(Person.class, 1L);
 
 // Full per-type reindex; unchanged identity object is required.
 var nextSpec = SearchSpecification.builder(personId)
-    .prefix("name", Person::name)
+    .prefix(Person::name)
     .build();
 cache.updateSpecification(Person.class, nextSpec);
 
@@ -90,17 +94,30 @@ var forThroughput = ZDCache.builder()
     .recency(Recency.APPROXIMATE)
     .build();
 
-// Method references name dimensions and searches, so renames stay in sync:
-var byReference = SearchSpecification.builder(personId)
-    .prefix(Person::name)
-    .build();
-List<Person> named = cache.search(Person::name, "si");
-
 // Reads that do not count as use, and housekeeping:
 Person quiet = cache.peek(Person.class, 1L);
 boolean cached = cache.contains(Person.class, 2L);
 List<Person> everyone = cache.values(Person.class);
 cache.clear(Person.class);
+```
+
+### Other ways to declare and search
+
+Method references keep dimension names and searches in sync when a property is renamed; a chain of method references searches nested dimensions up to five levels deep, and deeper paths use the string. Explicit names, lambdas and property names are also supported, and every search can name its dimension as a string. A type has one specification, so use this equivalent declaration instead of the one above, not alongside it:
+
+```java
+var equivalentSpec = SearchSpecification.builder(personId)
+    .prefix("name", Person::name)                                    // explicit name with a method reference
+    .prefixEach("nameWords", p -> List.of(p.name().split(" ")))      // derived values need a lambda and a name
+    .range("age")                                                    // property name, read by reflection
+    .each("addresses", Person::addresses, address -> address
+        .prefix("city", Address::city))
+    .build();
+
+List<Person> people = cache.search(Person.class, "name", "si");
+List<Person> sameAgain = cache.search(Person.class, Person::name, "si");
+List<Person> inOslo = cache.search(Person.class, "addresses.city", "os");
+List<Person> aged = cache.search(Person.class, "age", ValueRange.between(20, 40));
 ```
 
 ## Basic/default specification
@@ -114,7 +131,7 @@ cache.put(Person.class, 42L, new Person(42, "Siri", 29, List.of()));
 var existing = cache.getSpecification(Person.class);
 // Capture its SAME IdentityDimension instance, even on later specification updates.
 var upgraded = SearchSpecification.builder(existing.identity())
-    .prefix("name", Person::name).build();
+    .prefix(Person::name).build();
 cache.updateSpecification(Person.class, upgraded);
 cache.put(Person.class, 43L, new Person(43, "Simon", 28, List.of()));
 ```
@@ -204,6 +221,7 @@ Measured 2026-10-13T22:57:53Z on Java 21.0.6 with 11 CPUs, 3 forks per benchmark
 | Caffeine (full scan) | 917 µs | 1,137 µs | 1,143 µs | 1,322 µs |
 | cache2k (full scan) | 2,823 µs | 2,780 µs | 2,654 µs | 2,975 µs |
 | Guava (full scan) | 2,197 µs | 2,735 µs | 2,887 µs | 2,258 µs |
+
 <!-- benchmark-summary:end -->
 
 How to read it: on one thread, zdcache's key lookup is as fast as Caffeine's or faster in both recency modes (24 ns for `get`, 76–85 ns for `put`), with cache2k the fastest, and keeping four indexes up to date costs about 2.3 µs per `put`. Searches through indexes are about 15× faster than CQEngine for prefix and compound queries, 1.5× for exact and range queries, and 9–2,000× faster than scanning a cache. Under concurrent load the default strict LRU store reads at about 45% of Caffeine's rate and writes at under a tenth of it. With `recency(Recency.APPROXIMATE)` zdcache reads at 65–90% of Caffeine's rate between runs and writes at about 40% of it, giving up exact LRU order under heavy contention. Choose zdcache when you look cached objects up by more than their key; for key-only caching with many concurrent writes, Caffeine or cache2k fits better.
