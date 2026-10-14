@@ -21,15 +21,19 @@ import java.util.function.Supplier;
 
 /** One capacity, lock, specification, store and dimension registry per root class. */
 public final class TypeCache<T, ID> {
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-    private final Lock read = lock.readLock();
-    private final Lock write = lock.writeLock();
+    private final Lock read;
+    private final Lock write;
     private final IdentityStore<ID, T> store;
     private final Class<T> type;
+    private final long order;
+    private volatile long version;
     private volatile SearchSpecification<T, ID> specification;
     private volatile DimensionRegistry<T, ID> indexes;
 
-    public TypeCache(SearchSpecification<T, ID> spec, IdentityStore<ID, T> store) {
+    public TypeCache(SearchSpecification<T, ID> spec, IdentityStore<ID, T> store, ReentrantReadWriteLock lock, long order) {
+        this.read = lock.readLock();
+        this.write = lock.writeLock();
+        this.order = order;
         this.specification = Objects.requireNonNull(spec);
         this.type = spec.type();
         this.store = Objects.requireNonNull(store);
@@ -88,8 +92,32 @@ public final class TypeCache<T, ID> {
         }
     }
 
+    public long order() {
+        return order;
+    }
+
+    public void beginExclusive() {
+        write.lock();
+        version++;
+    }
+
+    public void endExclusive() {
+        version++;
+        write.unlock();
+    }
+
     public T get(ID id, Class<?> view) {
-        if (store.concurrent()) return read(id, view);
+        if (store.concurrent()) {
+            long before = version;
+            if ((before & 1) == 0) {
+                T found = read(id, view);
+                if (version == before) return found;
+            }
+            read.lock();
+            try {
+                return read(id, view);
+            } finally { read.unlock(); }
+        }
         write.lock();
         try {
             return read(id, view);
