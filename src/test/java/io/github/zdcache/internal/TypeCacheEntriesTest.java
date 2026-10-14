@@ -40,7 +40,7 @@ class TypeCacheEntriesTest {
         assertTrue(cache.search(Person.class, "city", "Oslo").isEmpty());
     }
 
-    @Test void byDefaultEveryPutCreatesAnEntry() {
+    @Test void withoutEntryPerIdEveryPutCreatesAnEntry() {
         var cache = cache(INDEXED, false);
         cache.put(1L, new Person(1L, "Ada", "Oslo"), null);
         IndexedEntry<Person> first = store.peek(1L);

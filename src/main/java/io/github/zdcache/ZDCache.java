@@ -55,7 +55,7 @@ public final class ZDCache {
         private IdentityStoreFactory stores = IdentityStoreFactory.bufferedLru();
         private Recency recency;
         private Locking locking = Locking.PER_TYPE;
-        private Entries entries = Entries.PER_PUT;
+        private Entries entries = Entries.PER_ID;
 
         public Builder defaultMaxPerType(int maximum) {
             positive(maximum);

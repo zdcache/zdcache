@@ -156,7 +156,7 @@ const VIEWS = [
     ] },
   { key: "stores", name: "zdcache configurations", highlightName: "Default configuration", otherName: "Other configurations",
     subtitle: "zdcache only, in each configuration: the default buffered LRU store, approximate recency, the LinkedHashMap "
-      + "store and the Caffeine store, with and without indexes, single locking and one entry per id. Every chart uses a log scale.",
+      + "store and the Caffeine store, with and without indexes, single locking and one entry per put. Every chart uses a log scale.",
     rows: [
       { subject: "zdcache-buffered-keys", label: "Buffered LRU (default)", highlight: true },
       { subject: "zdcache-buffered-indexed", label: "Buffered LRU, 4 indexes", highlight: true },
@@ -167,7 +167,7 @@ const VIEWS = [
       { subject: "zdcache-caffeine-keys", label: "Caffeine store" },
       { subject: "zdcache-caffeine-indexed", label: "Caffeine store, 4 indexes" },
       { subject: "zdcache-single-indexed", label: "SINGLE locking, 4 indexes" },
-      { subject: "zdcache-per-id-indexed", label: "One entry per id, 4 indexes" },
+      { subject: "zdcache-per-put-indexed", label: "One entry per put, 4 indexes" },
       { subject: "zdcache-locking-per-type", label: "PER_TYPE locking (default)", highlight: true },
       { subject: "zdcache-locking-single", label: "SINGLE locking" },
     ] },
