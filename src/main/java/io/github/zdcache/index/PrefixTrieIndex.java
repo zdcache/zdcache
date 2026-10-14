@@ -128,6 +128,23 @@ public final class PrefixTrieIndex<ID> implements DimensionIndex<ID> {
         }
     }
 
+    @Override public void replace(ID id, ID replacement, Object value) {
+        String text = normalized(value);
+        Node node = root;
+        int i = 0;
+        while (i < text.length()) {
+            int slot = node.slot(text.charAt(i));
+            Node child = slot < 0 ? null : node.children[slot];
+            if (child == null || !text.startsWith(child.edge, i)) {
+                add(replacement, value);
+                return;
+            }
+            node = child;
+            i += child.edge.length();
+        }
+        node.ids = Ids.replace(node.ids, id, replacement);
+    }
+
     @Override public boolean isEmpty() { return root.ids == null && root.children.length == 0; }
 
     @Override public void forEachMatch(Object query, Consumer<? super ID> action) {

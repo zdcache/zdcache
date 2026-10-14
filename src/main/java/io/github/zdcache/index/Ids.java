@@ -23,6 +23,15 @@ final class Ids {
         return holder.equals(id) ? holder : new Many(holder, id);
     }
 
+    static Object replace(Object holder, Object id, Object replacement) {
+        if (holder instanceof Many many) {
+            many.remove(id);
+            many.add(replacement);
+            return many;
+        }
+        return holder != null && holder.equals(id) ? replacement : add(holder, replacement);
+    }
+
     static Object remove(Object holder, Object id) {
         if (holder instanceof Many many) {
             many.remove(id);

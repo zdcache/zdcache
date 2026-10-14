@@ -1,7 +1,10 @@
 package io.github.zdcache;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -174,6 +177,49 @@ class LockingTest {
 
             assertEquals(1, found.size());
             assertEquals(2, customer.openOrders());
+        }
+    }
+
+    @Test void virtualThreadsWaitingForABlockLeaveCarriersForOtherWork() throws Exception {
+        var cache = cache(Locking.PER_TYPE);
+        int waiters = 2 * Runtime.getRuntime().availableProcessors() + 4;
+        var inside = new CountDownLatch(1);
+        var started = new CountDownLatch(waiters);
+        var release = new CountDownLatch(1);
+        var executor = Executors.newVirtualThreadPerTaskExecutor();
+        try {
+            Future<?> holder = executor.submit(() -> cache.atomically(() -> {
+                inside.countDown();
+                awaitUninterruptibly(release);
+                cache.put(new Customer(1, "Ada", 0));
+            }));
+            inside.await();
+            List<Future<?>> waiting = new ArrayList<>();
+            for (int i = 0; i < waiters; i++) {
+                long id = i;
+                waiting.add(executor.submit(() -> {
+                    started.countDown();
+                    cache.atomically(() -> cache.put(new Order(id, 1)));
+                }));
+            }
+            assertTrue(started.await(10, TimeUnit.SECONDS), "waiting threads could not all start");
+            Thread.sleep(100);
+            executor.submit(release::countDown);
+            holder.get(10, TimeUnit.SECONDS);
+            for (Future<?> future : waiting) future.get(10, TimeUnit.SECONDS);
+        } finally {
+            release.countDown();
+            executor.close();
+        }
+        assertNotNull(cache.get(Customer.class, 1L));
+        for (long id = 0; id < waiters; id++) assertNotNull(cache.get(Order.class, id));
+    }
+
+    private static void awaitUninterruptibly(CountDownLatch latch) {
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

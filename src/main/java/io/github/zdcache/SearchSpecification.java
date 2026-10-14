@@ -3,12 +3,14 @@ package io.github.zdcache;
 import io.github.zdcache.internal.Getters;
 import io.github.zdcache.internal.PropertyAccess;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -194,7 +196,9 @@ public final class SearchSpecification<T, ID> {
         private <V> void leaf(String name, IndexKind kind, boolean multi,
                               Function<CURRENT, ? extends Iterable<V>> extractor) {
             String fullPath = child(name);
-            SearchDimension<ROOT> def = new SearchDimension<>(fullPath, kind, multi || !path.isEmpty(), root -> {
+            @SuppressWarnings("unchecked")
+            Function<ROOT, ? extends Iterable<?>> atRoot = root -> extractor.apply((CURRENT) root);
+            SearchDimension<ROOT> def = new SearchDimension<>(fullPath, kind, multi || !path.isEmpty(), path.isEmpty() ? atRoot : root -> {
                 List<V> values = new ArrayList<>();
                 for (CURRENT current : parents.apply(root)) {
                     if (current == null) continue;
@@ -263,7 +267,9 @@ public final class SearchSpecification<T, ID> {
             List<SearchDimension.Part> declared = parts.stream()
                 .map(part -> new SearchDimension.Part(part.name(), part.kind())).toList();
             boolean multi = !path.isEmpty() || parts.stream().anyMatch(CompoundBuilder.PartExtractor::multi);
-            SearchDimension<ROOT> def = new SearchDimension<>(fullPath, IndexKind.COMPOUND, declared, multi, root -> {
+            @SuppressWarnings("unchecked")
+            Function<ROOT, ? extends Iterable<?>> atRoot = root -> CompoundBuilder.combinations(parts, (CURRENT) root);
+            SearchDimension<ROOT> def = new SearchDimension<>(fullPath, IndexKind.COMPOUND, declared, multi, path.isEmpty() ? atRoot : root -> {
                 List<List<Object>> keys = new ArrayList<>();
                 for (CURRENT current : parents.apply(root)) {
                     if (current != null) keys.addAll(CompoundBuilder.combinations(parts, current));
@@ -384,12 +390,36 @@ public final class SearchSpecification<T, ID> {
         }
 
         private static <E> List<List<Object>> combinations(List<PartExtractor<E>> parts, E element) {
-            List<List<Object>> keys = List.of(List.of());
-            for (PartExtractor<E> part : parts) {
-                Iterable<?> extracted = part.extractor().apply(element);
+            Object[] firsts = new Object[parts.size()];
+            List<Set<Object>> several = null;
+            boolean empty = false;
+            for (int p = 0; p < parts.size(); p++) {
+                Iterable<?> extracted = parts.get(p).extractor().apply(element);
                 if (extracted == null) return List.of();
-                LinkedHashSet<Object> values = new LinkedHashSet<>();
-                for (Object value : extracted) if (value != null) values.add(value);
+                LinkedHashSet<Object> values = null;
+                for (Object value : extracted) {
+                    if (value == null) continue;
+                    if (values != null) {
+                        values.add(value);
+                    } else if (firsts[p] == null) {
+                        firsts[p] = value;
+                    } else if (!firsts[p].equals(value)) {
+                        values = new LinkedHashSet<>();
+                        values.add(firsts[p]);
+                        values.add(value);
+                    }
+                }
+                if (firsts[p] == null) empty = true;
+                if (values != null) {
+                    if (several == null) several = new ArrayList<>(Collections.nCopies(parts.size(), null));
+                    several.set(p, values);
+                }
+            }
+            if (empty) return List.of();
+            if (several == null) return List.of(List.of(firsts));
+            List<List<Object>> keys = List.of(List.of());
+            for (int p = 0; p < parts.size(); p++) {
+                Collection<Object> values = several.get(p) != null ? several.get(p) : List.of(firsts[p]);
                 List<List<Object>> extended = new ArrayList<>(keys.size() * values.size());
                 for (List<Object> key : keys) {
                     for (Object value : values) {

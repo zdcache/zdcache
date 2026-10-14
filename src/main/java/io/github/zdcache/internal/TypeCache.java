@@ -25,15 +25,13 @@ public final class TypeCache<T, ID> {
     private final Lock write;
     private final IdentityStore<ID, T> store;
     private final Class<T> type;
-    private final long order;
     private volatile long version;
     private volatile SearchSpecification<T, ID> specification;
     private volatile DimensionRegistry<T, ID> indexes;
 
-    public TypeCache(SearchSpecification<T, ID> spec, IdentityStore<ID, T> store, ReentrantReadWriteLock lock, long order) {
+    public TypeCache(SearchSpecification<T, ID> spec, IdentityStore<ID, T> store, ReentrantReadWriteLock lock) {
         this.read = lock.readLock();
         this.write = lock.writeLock();
-        this.order = order;
         this.specification = Objects.requireNonNull(spec);
         this.type = spec.type();
         this.store = Objects.requireNonNull(store);
@@ -85,15 +83,14 @@ public final class TypeCache<T, ID> {
 
         IndexedEntry<T> entry = new IndexedEntry<>(entity, next);
         IndexedEntry<T> previous = store.put(id, entry);
-        if (previous != null) indexes.remove(previous, previous.snapshot());
         applyEvictions();
-        if (store.contains(id)) {
-            indexes.add(entry, next);
+        boolean kept = store.contains(id);
+        if (previous != null && kept) {
+            indexes.replace(previous, previous.snapshot(), entry, next);
+        } else {
+            if (previous != null) indexes.remove(previous, previous.snapshot());
+            if (kept) indexes.add(entry, next);
         }
-    }
-
-    public long order() {
-        return order;
     }
 
     public void beginExclusive() {

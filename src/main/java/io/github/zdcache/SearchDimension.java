@@ -37,33 +37,45 @@ public final class SearchDimension<T> {
 
     /** Extract a stable, de-duplicated snapshot of index keys. Null values are ignored. */
     public Set<Object> values(T entity) {
-        LinkedHashSet<Object> result = new LinkedHashSet<>();
         Iterable<?> values = extractor.apply(entity);
-        if (values != null) {
-            for (Object value : values) {
-                if (value != null) {
-                    if (kind == IndexKind.COMPOUND) {
-                        List<?> tuple = (List<?>) value;
-                        for (int i = 0; i < parts.size(); i++) {
-                            requireKind(path + "." + parts.get(i).name(), parts.get(i).kind(), tuple.get(i));
-                        }
-                    } else {
-                        requireKind(path, kind, value);
-                    }
-                    // Exact/range values must be immutable/equality-stable while indexed.
-                    result.add(value);
+        if (values == null) return Collections.emptySet();
+        Object first = null;
+        LinkedHashSet<Object> result = null;
+        for (Object value : values) {
+            if (value == null) continue;
+            if (kind == IndexKind.COMPOUND) {
+                List<?> tuple = (List<?>) value;
+                for (int i = 0; i < parts.size(); i++) {
+                    requireKind(path, parts.get(i).name(), parts.get(i).kind(), tuple.get(i));
                 }
+            } else {
+                requireKind(path, null, kind, value);
+            }
+            // Exact/range values must be immutable/equality-stable while indexed.
+            if (result != null) {
+                result.add(value);
+            } else if (first == null) {
+                first = value;
+            } else if (!first.equals(value)) {
+                result = new LinkedHashSet<>();
+                result.add(first);
+                result.add(value);
             }
         }
-        return Collections.unmodifiableSet(result);
+        if (result != null) return Collections.unmodifiableSet(result);
+        return first == null ? Collections.emptySet() : Collections.singleton(first);
     }
 
-    private static void requireKind(String path, IndexKind kind, Object value) {
+    private static void requireKind(String path, String part, IndexKind kind, Object value) {
         if (kind == IndexKind.PREFIX && !(value instanceof String)) {
-            throw new IllegalArgumentException("PREFIX value must be a String at " + path);
+            throw new IllegalArgumentException("PREFIX value must be a String at " + at(path, part));
         }
         if (kind == IndexKind.RANGE && !(value instanceof Comparable<?>)) {
-            throw new IllegalArgumentException("RANGE value must be Comparable at " + path);
+            throw new IllegalArgumentException("RANGE value must be Comparable at " + at(path, part));
         }
+    }
+
+    private static String at(String path, String part) {
+        return part == null ? path : path + "." + part;
     }
 }

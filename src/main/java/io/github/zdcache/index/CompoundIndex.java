@@ -33,7 +33,7 @@ public final class CompoundIndex<ID> implements DimensionIndex<ID> {
     }
 
     private static List<Object> head(List<Object> tuple) {
-        return List.copyOf(tuple.subList(0, tuple.size() - 1));
+        return tuple.subList(0, tuple.size() - 1);
     }
 
     private static Object last(List<Object> tuple) {
@@ -48,7 +48,10 @@ public final class CompoundIndex<ID> implements DimensionIndex<ID> {
 
     @Override public void add(ID id, Object value) {
         List<Object> tuple = tuple(value);
-        buckets.computeIfAbsent(head(tuple), ignored -> newBucket()).add(id, last(tuple));
+        List<Object> head = head(tuple);
+        DimensionIndex<ID> bucket = buckets.get(head);
+        if (bucket == null) buckets.put(List.copyOf(head), bucket = newBucket());
+        bucket.add(id, last(tuple));
     }
 
     @Override public void remove(ID id, Object value) {
@@ -59,6 +62,13 @@ public final class CompoundIndex<ID> implements DimensionIndex<ID> {
             bucket.remove(id, last(tuple));
             if (bucket.isEmpty()) buckets.remove(head);
         }
+    }
+
+    @Override public void replace(ID id, ID replacement, Object value) {
+        List<Object> tuple = tuple(value);
+        DimensionIndex<ID> bucket = buckets.get(head(tuple));
+        if (bucket == null) add(replacement, value);
+        else bucket.replace(id, replacement, last(tuple));
     }
 
     @Override public boolean isEmpty() { return buckets.isEmpty(); }
