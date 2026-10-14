@@ -51,31 +51,34 @@ record Person(long id, String name, int age, List<Address> addresses) {}
 var cache = ZDCache.builder()
     .defaultMaxPerType(10_000)
     .capacity(Person.class, 5_000)
-    .identityStore(IdentityStoreFactory.linkedHashMap())
     .build();
 
 // IMPORTANT: reuse this exact identity instance in replacement specifications.
 var personId = IdentityDimension.of(Person.class, "id", Person::id);
+
+// Method references name the dimensions: name, age, addresses.city and addresses.tags.
 var spec = SearchSpecification.builder(personId)
-    .prefix("name", Person::name)
-    .range("age", Person::age)
-    .each("addresses", Person::addresses, address -> address
-        .prefix("city", Address::city)
-        .exactEach("tags", Address::tags))
+    .prefix(Person::name)
+    .range(Person::age)
+    .each(Person::addresses, address -> address
+        .prefix(Address::city)
+        .exactEach(Address::tags))
     .build();
 
 cache.put(new Person(1, "Simon", 32,
     List.of(new Address("Oslo", List.of("home", "office")))), spec);
 cache.put(new Person(2, "Simone", 25, List.of()));
 
-List<Person> people = cache.search(Person.class, "name", "si");
+// The method reference gives both the type and the dimension:
+List<Person> people = cache.search(Person::name, "si");
+List<Person> aged = cache.search(Person::age, ValueRange.between(20, 40));
+// Nested dimensions are searched by their path:
 List<Person> inOslo = cache.search(Person.class, "addresses.city", "os");
-List<Person> aged = cache.search(Person.class, "age", ValueRange.between(20, 40));
 Person one = cache.get(Person.class, 1L);
 
 // Full per-type reindex; unchanged identity object is required.
 var nextSpec = SearchSpecification.builder(personId)
-    .prefix("name", Person::name)
+    .prefix(Person::name)
     .build();
 cache.updateSpecification(Person.class, nextSpec);
 
@@ -90,17 +93,30 @@ var forThroughput = ZDCache.builder()
     .recency(Recency.APPROXIMATE)
     .build();
 
-// Method references name dimensions and searches, so renames stay in sync:
-var byReference = SearchSpecification.builder(personId)
-    .prefix(Person::name)
-    .build();
-List<Person> named = cache.search(Person::name, "si");
-
 // Reads that do not count as use, and housekeeping:
 Person quiet = cache.peek(Person.class, 1L);
 boolean cached = cache.contains(Person.class, 2L);
 List<Person> everyone = cache.values(Person.class);
 cache.clear(Person.class);
+```
+
+### Other ways to declare and search
+
+Method references keep dimension names and searches in sync when a property is renamed. Explicit names, lambdas and property names are also supported, and every search can name its dimension as a string. A type has one specification, so use this equivalent declaration instead of the one above, not alongside it:
+
+```java
+var equivalentSpec = SearchSpecification.builder(personId)
+    .prefix("name", Person::name)                                    // explicit name with a method reference
+    .prefixEach("nameWords", p -> List.of(p.name().split(" ")))      // derived values need a lambda and a name
+    .range("age")                                                    // property name, read by reflection
+    .each("addresses", Person::addresses, address -> address
+        .prefix("city", Address::city))
+    .build();
+
+List<Person> people = cache.search(Person.class, "name", "si");
+List<Person> sameAgain = cache.search(Person.class, Person::name, "si");
+List<Person> inOslo = cache.search(Person.class, "addresses.city", "os");
+List<Person> aged = cache.search(Person.class, "age", ValueRange.between(20, 40));
 ```
 
 ## Basic/default specification
@@ -114,7 +130,7 @@ cache.put(Person.class, 42L, new Person(42, "Siri", 29, List.of()));
 var existing = cache.getSpecification(Person.class);
 // Capture its SAME IdentityDimension instance, even on later specification updates.
 var upgraded = SearchSpecification.builder(existing.identity())
-    .prefix("name", Person::name).build();
+    .prefix(Person::name).build();
 cache.updateSpecification(Person.class, upgraded);
 cache.put(Person.class, 43L, new Person(43, "Simon", 28, List.of()));
 ```
