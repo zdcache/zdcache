@@ -33,9 +33,12 @@ class CompoundSearchTest {
     }
 
     private static void forEachStore(int size, Consumer<ZDCache> scenario) {
-        scenario.accept(ZDCache.builder().defaultMaxPerType(size).identityStore(IdentityStoreFactory.linkedHashMap()).build());
-        scenario.accept(ZDCache.builder().defaultMaxPerType(size).identityStore(IdentityStoreFactory.caffeine()).build());
-        scenario.accept(ZDCache.builder().defaultMaxPerType(size).identityStore(IdentityStoreFactory.bufferedLru()).build());
+        for (Entries entries : Entries.values()) {
+            for (var stores : List.of(IdentityStoreFactory.linkedHashMap(), IdentityStoreFactory.caffeine(),
+                    IdentityStoreFactory.bufferedLru())) {
+                scenario.accept(ZDCache.builder().defaultMaxPerType(size).identityStore(stores).entries(entries).build());
+            }
+        }
     }
 
     private static ZDCache populated(SearchSpecification<Person, Long> spec) {

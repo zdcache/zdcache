@@ -3,6 +3,7 @@ package io.github.zdcache.bench;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import io.github.zdcache.IdentityDimension;
+import io.github.zdcache.Entries;
 import io.github.zdcache.Locking;
 import io.github.zdcache.Recency;
 import io.github.zdcache.SearchSpecification;
@@ -52,6 +53,7 @@ public final class Subjects {
     public static final String ZDCACHE_APPROXIMATE_KEYS = "zdcache-approximate-keys";
     public static final String ZDCACHE_APPROXIMATE_INDEXED = "zdcache-approximate-indexed";
     public static final String ZDCACHE_SINGLE_INDEXED = "zdcache-single-indexed";
+    public static final String ZDCACHE_PER_ID_INDEXED = "zdcache-per-id-indexed";
     public static final String EHCACHE = "ehcache";
     public static final String CONCURRENT_HASH_MAP = "concurrent-hash-map";
     public static final String HAZELCAST = "hazelcast";
@@ -61,9 +63,9 @@ public final class Subjects {
 
     public static final List<String> CONFIGURATIONS = List.of(ZDCACHE_BUFFERED_KEYS, ZDCACHE_BUFFERED_INDEXED,
         ZDCACHE_APPROXIMATE_KEYS, ZDCACHE_APPROXIMATE_INDEXED, ZDCACHE_LHM_KEYS, ZDCACHE_LHM_INDEXED,
-        ZDCACHE_CAFFEINE_KEYS, ZDCACHE_CAFFEINE_INDEXED, ZDCACHE_SINGLE_INDEXED);
+        ZDCACHE_CAFFEINE_KEYS, ZDCACHE_CAFFEINE_INDEXED, ZDCACHE_SINGLE_INDEXED, ZDCACHE_PER_ID_INDEXED);
     public static final List<String> INDEXED_CONFIGURATIONS = List.of(ZDCACHE_BUFFERED_INDEXED, ZDCACHE_APPROXIMATE_INDEXED,
-        ZDCACHE_LHM_INDEXED, ZDCACHE_CAFFEINE_INDEXED, ZDCACHE_SINGLE_INDEXED);
+        ZDCACHE_LHM_INDEXED, ZDCACHE_CAFFEINE_INDEXED, ZDCACHE_SINGLE_INDEXED, ZDCACHE_PER_ID_INDEXED);
     public static final List<String> OTHER_LIBRARIES = List.of(CAFFEINE, CACHE2K, GUAVA, EHCACHE, CONCURRENT_HASH_MAP,
         HAZELCAST, CQENGINE);
     public static final List<String> ALL = java.util.stream.Stream.concat(CONFIGURATIONS.stream(), OTHER_LIBRARIES.stream()).toList();
@@ -91,6 +93,8 @@ public final class Subjects {
             case ZDCACHE_APPROXIMATE_INDEXED -> zdcache(IdentityStoreFactory.bufferedLru(), Recency.APPROXIMATE, capacity, reflective());
             case ZDCACHE_SINGLE_INDEXED ->
                 zdcache(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).locking(Locking.SINGLE), capacity, reflective());
+            case ZDCACHE_PER_ID_INDEXED ->
+                zdcache(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).entries(Entries.PER_ID), capacity, reflective());
             case EHCACHE -> new EhcacheSubject(capacity);
             case CONCURRENT_HASH_MAP -> new ConcurrentHashMapSubject();
             case HAZELCAST -> new HazelcastSubject();

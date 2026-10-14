@@ -19,9 +19,11 @@ class SearchResultConsistencyTest {
     private static void forEachStore(int capacity, Consumer<ZDCache> scenario) {
         for (var stores : List.of(IdentityStoreFactory.bufferedLru(), IdentityStoreFactory.linkedHashMap(),
                 IdentityStoreFactory.caffeine())) {
-            var cache = ZDCache.builder().defaultMaxPerType(capacity).identityStore(stores).build();
-            cache.register(SPEC);
-            scenario.accept(cache);
+            for (Entries entries : Entries.values()) {
+                var cache = ZDCache.builder().defaultMaxPerType(capacity).identityStore(stores).entries(entries).build();
+                cache.register(SPEC);
+                scenario.accept(cache);
+            }
         }
     }
 

@@ -110,6 +110,7 @@ public final class DimensionRegistry<T, ID> {
         for (int i = 0; i < after.length; i++) {
             DimensionIndex<IndexedEntry<T>> index = indexes.get(i);
             if (sameValues(before[i], after[i])) {
+                if (previous == entry) continue;
                 if (after[i] instanceof Many many) {
                     for (Object value : many.values()) index.replace(previous, entry, value);
                 } else if (after[i] != null) {

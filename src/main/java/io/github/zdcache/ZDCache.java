@@ -34,6 +34,7 @@ public final class ZDCache {
     private final IdentityStoreFactory stores;
     private final Recency recency;
     private final Locking locking;
+    private final Entries entries;
     private final ReentrantReadWriteLock sharedLock = new ReentrantReadWriteLock();
     private final ThreadLocal<List<TypeCache<?, ?>>> exclusive = new ThreadLocal<>();
 
@@ -43,6 +44,7 @@ public final class ZDCache {
         stores = builder.stores;
         recency = builder.recency;
         locking = builder.locking;
+        entries = builder.entries;
     }
 
     public static Builder builder() { return new Builder(); }
@@ -53,6 +55,7 @@ public final class ZDCache {
         private IdentityStoreFactory stores = IdentityStoreFactory.bufferedLru();
         private Recency recency;
         private Locking locking = Locking.PER_TYPE;
+        private Entries entries = Entries.PER_PUT;
 
         public Builder defaultMaxPerType(int maximum) {
             positive(maximum);
@@ -77,6 +80,11 @@ public final class ZDCache {
 
         public Builder locking(Locking locking) {
             this.locking = Objects.requireNonNull(locking);
+            return this;
+        }
+
+        public Builder entries(Entries entries) {
+            this.entries = Objects.requireNonNull(entries);
             return this;
         }
 
@@ -182,7 +190,7 @@ public final class ZDCache {
                 int capacity = capacities.getOrDefault(type, defaultMaxPerType);
                 cache = new TypeCache<>(specification,
                     recency == null ? stores.create(capacity) : stores.create(capacity, recency),
-                    locking == Locking.SINGLE ? sharedLock : new ReentrantReadWriteLock());
+                    locking == Locking.SINGLE ? sharedLock : new ReentrantReadWriteLock(), entries == Entries.PER_ID);
                 types.put(type, cache);
                 List<TypeCache<?, ?>> ordered = new ArrayList<>(inTypeOrder);
                 ordered.add(cache);

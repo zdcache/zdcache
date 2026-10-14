@@ -2,7 +2,7 @@ package io.github.zdcache.store;
 
 /** Internally stored entity plus values recorded at its most recent explicit insert/reindex. */
 public final class IndexedEntry<T> {
-    private final T entity;
+    private volatile T entity;
     private Object[] snapshot;
     private volatile boolean evicted;
 
@@ -17,6 +17,11 @@ public final class IndexedEntry<T> {
 
     public void markEvicted() {
         evicted = true;
+    }
+
+    public void update(T replacement, Object[] replacementSnapshot) {
+        this.snapshot = replacementSnapshot;
+        this.entity = replacement;
     }
 
     /** Only called under the owning TypeCache lock after a successful full index rebuild. */

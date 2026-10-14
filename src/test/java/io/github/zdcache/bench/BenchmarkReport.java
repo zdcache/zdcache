@@ -51,7 +51,8 @@ public final class BenchmarkReport {
         new Row(Subjects.ZDCACHE_LHM_INDEXED, "LinkedHashMap store, 4 indexes"),
         new Row(Subjects.ZDCACHE_CAFFEINE_KEYS, "Caffeine store"),
         new Row(Subjects.ZDCACHE_CAFFEINE_INDEXED, "Caffeine store, 4 indexes"),
-        new Row(Subjects.ZDCACHE_SINGLE_INDEXED, "`Locking.SINGLE`, 4 indexes"));
+        new Row(Subjects.ZDCACHE_SINGLE_INDEXED, "`Locking.SINGLE`, 4 indexes"),
+        new Row(Subjects.ZDCACHE_PER_ID_INDEXED, "`Entries.PER_ID`, 4 indexes"));
     private static final List<Row> SEARCHERS = List.of(
         new Row(Subjects.ZDCACHE_BUFFERED_INDEXED, "zdcache, 4 indexes"),
         new Row(Subjects.ZDCACHE_APPROXIMATE_INDEXED, "zdcache, approximate, 4 indexes"),

@@ -115,7 +115,7 @@ class SubjectsTest {
     }
 
     @Test void subjectListsCoverEveryConfigurationAndLibrary() {
-        assertEquals(9, Subjects.CONFIGURATIONS.size());
+        assertEquals(10, Subjects.CONFIGURATIONS.size());
         assertTrue(Subjects.SEARCHABLE.containsAll(Subjects.INDEXED_CONFIGURATIONS));
         assertTrue(Subjects.ALL.containsAll(List.of(Subjects.EHCACHE, Subjects.CONCURRENT_HASH_MAP, Subjects.HAZELCAST)));
     }

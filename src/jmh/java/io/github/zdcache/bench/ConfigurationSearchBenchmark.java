@@ -11,7 +11,8 @@ import org.openjdk.jmh.annotations.*;
 @Measurement(iterations = 5, time = 1)
 public class ConfigurationSearchBenchmark extends SearchBase {
     @Param({Subjects.ZDCACHE_BUFFERED_INDEXED, Subjects.ZDCACHE_APPROXIMATE_INDEXED, Subjects.ZDCACHE_LHM_INDEXED,
-            Subjects.ZDCACHE_CAFFEINE_INDEXED, Subjects.ZDCACHE_SINGLE_INDEXED})
+            Subjects.ZDCACHE_CAFFEINE_INDEXED, Subjects.ZDCACHE_SINGLE_INDEXED,
+            Subjects.ZDCACHE_PER_ID_INDEXED})
     String subject;
 
     @Override String subject() { return subject; }

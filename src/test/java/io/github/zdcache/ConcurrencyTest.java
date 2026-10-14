@@ -51,6 +51,13 @@ class ConcurrencyTest {
         hammer(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).recency(Recency.APPROXIMATE));
     }
 
+    @Test void entriesPerIdStayConsistentUnderConcurrentUseAndEviction() throws Exception {
+        hammer(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).entries(Entries.PER_ID));
+        hammer(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).recency(Recency.APPROXIMATE).entries(Entries.PER_ID));
+        hammer(ZDCache.builder().identityStore(IdentityStoreFactory.caffeine()).entries(Entries.PER_ID));
+        hammer(ZDCache.builder().identityStore(IdentityStoreFactory.linkedHashMap()).entries(Entries.PER_ID));
+    }
+
     private static void hammer(ZDCache.Builder builder) throws Exception {
         var cache = builder.defaultMaxPerType(CAPACITY).build();
         cache.register(spec());

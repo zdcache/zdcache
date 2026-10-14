@@ -19,8 +19,21 @@ class LockingTest {
     static final IdentityDimension<Customer, Long> CUSTOMER_ID = IdentityDimension.of(Customer.class, "id", Customer::id);
     static final IdentityDimension<Order, Long> ORDER_ID = IdentityDimension.of(Order.class, "id", Order::id);
 
+    private record Setup(Locking locking, Entries entries) {
+        ZDCache cache() { return LockingTest.cache(locking, entries); }
+        @Override public String toString() { return locking + "/" + entries; }
+    }
+
+    private static final List<Setup> SETUPS = List.of(
+        new Setup(Locking.PER_TYPE, Entries.PER_PUT), new Setup(Locking.SINGLE, Entries.PER_PUT),
+        new Setup(Locking.PER_TYPE, Entries.PER_ID), new Setup(Locking.SINGLE, Entries.PER_ID));
+
     private static ZDCache cache(Locking locking) {
-        var cache = ZDCache.builder().locking(locking).build();
+        return cache(locking, Entries.PER_PUT);
+    }
+
+    private static ZDCache cache(Locking locking, Entries entries) {
+        var cache = ZDCache.builder().locking(locking).entries(entries).build();
         cache.register(SearchSpecification.builder(CUSTOMER_ID).prefix(Customer::name).build());
         cache.register(SearchSpecification.builder(ORDER_ID).exact(Order::customerId).build());
         return cache;
@@ -71,8 +84,8 @@ class LockingTest {
     }
 
     @Test void otherThreadsNeverSeeAnAtomicBlockHalfDone() throws Exception {
-        for (Locking locking : Locking.values()) {
-            var cache = cache(locking);
+        for (Setup locking : SETUPS) {
+            var cache = locking.cache();
             cache.put(new Customer(1, "Ada", 1_000));
             for (long id = 1; id <= 1_000; id++) cache.put(new Order(id, 1));
             var done = new AtomicBoolean();
@@ -105,8 +118,8 @@ class LockingTest {
     }
 
     @Test void lockFreeReadsWaitForARunningBlock() throws Exception {
-        for (Locking locking : Locking.values()) {
-            var cache = cache(locking);
+        for (Setup locking : SETUPS) {
+            var cache = locking.cache();
             cache.put(new Customer(1, "Ada", 0));
             var inside = new CountDownLatch(1);
             var release = new CountDownLatch(1);
@@ -137,8 +150,8 @@ class LockingTest {
     }
 
     @Test void typesRegisteredInsideABlockAreLockedUntilItEnds() throws Exception {
-        for (Locking locking : Locking.values()) {
-            var cache = cache(locking);
+        for (Setup locking : SETUPS) {
+            var cache = locking.cache();
             var inside = new CountDownLatch(1);
             var release = new CountDownLatch(1);
             var seen = new AtomicReference<Invoice>();
@@ -168,8 +181,8 @@ class LockingTest {
     }
 
     @Test void blocksReturnValuesAndNestInsideEachOther() {
-        for (Locking locking : Locking.values()) {
-            var cache = cache(locking);
+        for (Setup locking : SETUPS) {
+            var cache = locking.cache();
             cache.put(new Customer(1, "Ada", 2));
 
             List<Customer> found = cache.atomically(() -> cache.atomically(() -> cache.search(Customer::name, "ad")));
@@ -224,8 +237,8 @@ class LockingTest {
     }
 
     @Test void anExceptionInsideABlockReleasesEveryLock() throws Exception {
-        for (Locking locking : Locking.values()) {
-            var cache = cache(locking);
+        for (Setup locking : SETUPS) {
+            var cache = locking.cache();
             cache.put(new Customer(1, "Ada", 0));
 
             assertThrows(IllegalStateException.class, () -> cache.atomically(() -> {
