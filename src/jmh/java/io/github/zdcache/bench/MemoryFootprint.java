@@ -18,7 +18,8 @@ public final class MemoryFootprint {
             Subjects.CONCURRENT_HASH_MAP);
     private static final List<String> INDEXED =
         List.of(Subjects.ZDCACHE_BUFFERED_INDEXED, Subjects.ZDCACHE_APPROXIMATE_INDEXED, Subjects.ZDCACHE_LHM_INDEXED,
-            Subjects.ZDCACHE_CAFFEINE_INDEXED, Subjects.ZDCACHE_SINGLE_INDEXED, Subjects.CQENGINE);
+            Subjects.ZDCACHE_CAFFEINE_INDEXED, Subjects.ZDCACHE_SINGLE_INDEXED, Subjects.ZDCACHE_PER_ID_INDEXED,
+            Subjects.CQENGINE);
 
     public static void main(String[] args) throws IOException {
         if (args.length > 1) SIZES = BenchmarkPlan.read(Path.of(args[1])).footprintSizes();

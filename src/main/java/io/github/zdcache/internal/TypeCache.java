@@ -25,11 +25,14 @@ public final class TypeCache<T, ID> {
     private final Lock write;
     private final IdentityStore<ID, T> store;
     private final Class<T> type;
+    private final boolean entryPerId;
     private volatile long version;
     private volatile SearchSpecification<T, ID> specification;
     private volatile DimensionRegistry<T, ID> indexes;
 
-    public TypeCache(SearchSpecification<T, ID> spec, IdentityStore<ID, T> store, ReentrantReadWriteLock lock) {
+    public TypeCache(SearchSpecification<T, ID> spec, IdentityStore<ID, T> store, ReentrantReadWriteLock lock,
+                     boolean entryPerId) {
+        this.entryPerId = entryPerId;
         this.read = lock.readLock();
         this.write = lock.writeLock();
         this.specification = Objects.requireNonNull(spec);
@@ -81,6 +84,7 @@ public final class TypeCache<T, ID> {
         indexes.validate(next);
         applyEvictions();
 
+        if (entryPerId && specification.searchable() && updateInPlace(id, entity, next)) return;
         IndexedEntry<T> entry = new IndexedEntry<>(entity, next);
         IndexedEntry<T> previous = store.put(id, entry);
         applyEvictions();
@@ -91,6 +95,17 @@ public final class TypeCache<T, ID> {
             if (previous != null) indexes.remove(previous, previous.snapshot());
             if (kept) indexes.add(entry, next);
         }
+    }
+
+    private boolean updateInPlace(ID id, T entity, Object[] next) {
+        IndexedEntry<T> current = store.peek(id);
+        if (current == null || current.evicted()) return false;
+        indexes.replace(current, current.snapshot(), current, next);
+        current.update(entity, next);
+        IndexedEntry<T> previous = store.put(id, current);
+        if (previous != null && previous != current) indexes.remove(previous, previous.snapshot());
+        applyEvictions();
+        return true;
     }
 
     public void beginExclusive() {
@@ -129,7 +144,8 @@ public final class TypeCache<T, ID> {
         IndexedEntry<T> found = store.peek(id);
         if (found == null || !view.isInstance(found.entity())) return null;
         IndexedEntry<T> entry = store.get(id);
-        return entry == null || !view.isInstance(entry.entity()) ? null : entry.entity();
+        T entity = entry == null ? null : entry.entity();
+        return view.isInstance(entity) ? entity : null;
     }
 
     public T peek(ID id, Class<?> view) {

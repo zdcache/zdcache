@@ -405,6 +405,7 @@ nothing is evicted.
 | Caffeine store | zdcache | Caffeine | Frequency-aware | None | Configuration, concurrent, memory |
 | Caffeine store, 4 indexes | zdcache | Caffeine | Frequency-aware | 4 | Configuration, memory |
 | `Locking.SINGLE`, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | Configuration, memory |
+| `Entries.PER_ID`, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | Configuration, memory |
 | Caffeine | Caffeine 3.2.4 | – | Frequency-aware | None; searches scan | Library, concurrent, memory |
 | cache2k | cache2k 2.6.1 | – | Clock-Pro | None; searches scan | Library, concurrent, memory |
 | Guava | Guava 33.7.2 | – | LRU per segment | None; searches scan | Library, concurrent, memory |

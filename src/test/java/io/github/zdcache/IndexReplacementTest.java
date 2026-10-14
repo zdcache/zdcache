@@ -19,10 +19,13 @@ class IndexReplacementTest {
             .build();
 
     private static void forEachStore(Consumer<ZDCache> scenario) {
-        scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).build());
-        scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).recency(Recency.APPROXIMATE).build());
-        scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.linkedHashMap()).build());
-        scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.caffeine()).build());
+        for (Entries entries : Entries.values()) {
+            scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).entries(entries).build());
+            scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).recency(Recency.APPROXIMATE)
+                .entries(entries).build());
+            scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.linkedHashMap()).entries(entries).build());
+            scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.caffeine()).entries(entries).build());
+        }
     }
 
     private static void assertOnly(Person expected, List<Person> found) {
