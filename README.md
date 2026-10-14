@@ -221,6 +221,7 @@ Measured 2026-10-13T22:57:53Z on Java 21.0.6 with 11 CPUs, 3 forks per benchmark
 | Caffeine (full scan) | 917 µs | 1,137 µs | 1,143 µs | 1,322 µs |
 | cache2k (full scan) | 2,823 µs | 2,780 µs | 2,654 µs | 2,975 µs |
 | Guava (full scan) | 2,197 µs | 2,735 µs | 2,887 µs | 2,258 µs |
+
 <!-- benchmark-summary:end -->
 
 How to read it: on one thread, zdcache's key lookup is as fast as Caffeine's or faster in both recency modes (24 ns for `get`, 76–85 ns for `put`), with cache2k the fastest, and keeping four indexes up to date costs about 2.3 µs per `put`. Searches through indexes are about 15× faster than CQEngine for prefix and compound queries, 1.5× for exact and range queries, and 9–2,000× faster than scanning a cache. Under concurrent load the default strict LRU store reads at about 45% of Caffeine's rate and writes at under a tenth of it. With `recency(Recency.APPROXIMATE)` zdcache reads at 65–90% of Caffeine's rate between runs and writes at about 40% of it, giving up exact LRU order under heavy contention. Choose zdcache when you look cached objects up by more than their key; for key-only caching with many concurrent writes, Caffeine or cache2k fits better.
