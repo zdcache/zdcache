@@ -4,7 +4,6 @@ import io.github.zdcache.internal.Getters;
 import io.github.zdcache.internal.TypeCache;
 import io.github.zdcache.store.IdentityStoreFactory;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -15,7 +14,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.StringJoiner;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Supplier;
 
@@ -28,14 +27,14 @@ public final class ZDCache {
     private final Map<Class<?>, TypeRedirect<?>> redirects = new ConcurrentHashMap<>();
     private final Map<Class<?>, TypeCache<?, ?>> resolved = new ConcurrentHashMap<>();
     private volatile Specified lastSpecified;
-    private final Object registry = new Object();
+    private final ReentrantLock registry = new ReentrantLock();
+    private volatile List<TypeCache<?, ?>> inTypeOrder = List.of();
     private final int defaultMaxPerType;
     private final Map<Class<?>, Integer> capacities;
     private final IdentityStoreFactory stores;
     private final Recency recency;
     private final Locking locking;
     private final ReentrantReadWriteLock sharedLock = new ReentrantReadWriteLock();
-    private final AtomicLong typeOrder = new AtomicLong();
     private final ThreadLocal<List<TypeCache<?, ?>>> exclusive = new ThreadLocal<>();
 
     private ZDCache(Builder builder) {
@@ -116,7 +115,8 @@ public final class ZDCache {
     }
 
     private TypeCache<?, ?> resolveAndRemember(Class<?> type) {
-        synchronized (registry) {
+        registry.lock();
+        try {
             TypeCache<?, ?> cache = specified(type);
             if (cache == null) cache = nearestSuperclass(type);
             if (cache == null) cache = nearestInterface(type);
@@ -125,7 +125,7 @@ public final class ZDCache {
                 resolved.put(type, cache);
             }
             return cache;
-        }
+        } finally { registry.unlock(); }
     }
 
     private void requireNoOwnCapacity(Class<?> type, Class<?> servedBy) {
@@ -174,15 +174,19 @@ public final class ZDCache {
         Class<T> type = specification.type();
         TypeCache<T, ID> existing = typeCache(type);
         if (existing != null) return existing;
-        synchronized (registry) {
+        registry.lock();
+        try {
             if (redirects.containsKey(type)) throw new ConflictingSearchSpecificationException(type);
             TypeCache<?, ?> cache = types.get(type);
             if (cache == null) {
                 int capacity = capacities.getOrDefault(type, defaultMaxPerType);
                 cache = new TypeCache<>(specification,
                     recency == null ? stores.create(capacity) : stores.create(capacity, recency),
-                    locking == Locking.SINGLE ? sharedLock : new ReentrantReadWriteLock(), typeOrder.getAndIncrement());
+                    locking == Locking.SINGLE ? sharedLock : new ReentrantReadWriteLock());
                 types.put(type, cache);
+                List<TypeCache<?, ?>> ordered = new ArrayList<>(inTypeOrder);
+                ordered.add(cache);
+                inTypeOrder = List.copyOf(ordered);
                 resolved.clear();
                 List<TypeCache<?, ?>> held = exclusive.get();
                 if (held != null) {
@@ -191,7 +195,7 @@ public final class ZDCache {
                 }
             }
             return (TypeCache<T, ID>) cache;
-        }
+        } finally { registry.unlock(); }
     }
 
     public void atomically(Runnable work) {
@@ -205,11 +209,11 @@ public final class ZDCache {
     public <R> R atomically(Supplier<R> work) {
         Objects.requireNonNull(work);
         if (exclusive.get() != null) return work.get();
-        synchronized (registry) {
-            List<TypeCache<?, ?>> held = new ArrayList<>();
+        registry.lock();
+        try {
+            List<TypeCache<?, ?>> caches = inTypeOrder;
+            List<TypeCache<?, ?>> held = new ArrayList<>(caches.size() + 1);
             try {
-                List<TypeCache<?, ?>> caches = new ArrayList<>(types.values());
-                caches.sort(Comparator.comparingLong(TypeCache::order));
                 for (TypeCache<?, ?> cache : caches) {
                     cache.beginExclusive();
                     held.add(cache);
@@ -217,10 +221,10 @@ public final class ZDCache {
                 exclusive.set(held);
                 return work.get();
             } finally {
-                exclusive.remove();
+                exclusive.set(null);
                 for (int i = held.size() - 1; i >= 0; i--) held.get(i).endExclusive();
             }
-        }
+        } finally { registry.unlock(); }
     }
 
     public <T, ID> void register(SearchSpecification<T, ID> specification) {
@@ -232,7 +236,8 @@ public final class ZDCache {
 
     public <S> void register(TypeRedirect<S> redirect) {
         Objects.requireNonNull(redirect);
-        synchronized (registry) {
+        registry.lock();
+        try {
             Class<S> type = redirect.type();
             TypeRedirect<?> existing = redirects.get(type);
             if (types.containsKey(type) || existing != null && existing.target() != redirect.target()) {
@@ -242,7 +247,7 @@ public final class ZDCache {
             register(redirect.target());
             redirects.put(type, redirect);
             resolved.clear();
-        }
+        } finally { registry.unlock(); }
     }
 
     /** Register the supplied specification on first insert; subsequent puts must reuse its instance. */

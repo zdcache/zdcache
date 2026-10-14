@@ -23,7 +23,9 @@ public final class PropertyAccess {
     private PropertyAccess() { }
 
     public static Function<Object, Object> reader(Class<?> type, String property) {
-        return READERS.get(type).computeIfAbsent(property, name -> resolve(type, name));
+        Map<String, Function<Object, Object>> readers = READERS.get(type);
+        Function<Object, Object> reader = readers.get(property);
+        return reader != null ? reader : readers.computeIfAbsent(property, name -> resolve(type, name));
     }
 
     public static Object read(Object target, String property) {

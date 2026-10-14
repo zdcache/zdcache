@@ -11,9 +11,11 @@ import io.github.zdcache.index.PrefixTrieIndex;
 import io.github.zdcache.index.RangeIndex;
 import io.github.zdcache.store.IndexedEntry;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -97,6 +99,40 @@ public final class DimensionRegistry<T, ID> {
                 indexes.get(i).remove(entry, slot);
             }
         }
+    }
+
+    public void replace(IndexedEntry<T> previous, Object[] before, IndexedEntry<T> entry, Object[] after) {
+        if (before.length != after.length) {
+            remove(previous, before);
+            add(entry, after);
+            return;
+        }
+        for (int i = 0; i < after.length; i++) {
+            DimensionIndex<IndexedEntry<T>> index = indexes.get(i);
+            if (sameValues(before[i], after[i])) {
+                if (after[i] instanceof Many many) {
+                    for (Object value : many.values()) index.replace(previous, entry, value);
+                } else if (after[i] != null) {
+                    index.replace(previous, entry, after[i]);
+                }
+            } else {
+                if (before[i] instanceof Many many) {
+                    for (Object value : many.values()) index.remove(previous, value);
+                } else if (before[i] != null) {
+                    index.remove(previous, before[i]);
+                }
+                if (after[i] instanceof Many many) {
+                    for (Object value : many.values()) index.add(entry, value);
+                } else if (after[i] != null) {
+                    index.add(entry, after[i]);
+                }
+            }
+        }
+    }
+
+    private static boolean sameValues(Object before, Object after) {
+        if (before instanceof Many a && after instanceof Many b) return Arrays.equals(a.values(), b.values());
+        return Objects.equals(before, after);
     }
 
     public boolean multiValued(String path) {

@@ -15,6 +15,10 @@ public final class ExactIndex<ID> implements DimensionIndex<ID> {
         idsByValue.computeIfPresent(value, (ignored, ids) -> Ids.remove(ids, id));
     }
 
+    @Override public void replace(ID id, ID replacement, Object value) {
+        idsByValue.compute(value, (ignored, ids) -> Ids.replace(ids, id, replacement));
+    }
+
     @Override public boolean isEmpty() { return idsByValue.isEmpty(); }
 
     @Override public void forEachMatch(Object query, Consumer<? super ID> action) {
