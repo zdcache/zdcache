@@ -177,4 +177,20 @@ class BenchmarkReportTest {
         assertTrue(summary.contains("| `Locking.SINGLE`, 4 indexes | – | – | 2,100 ns | 1.2 µs | – |"));
         assertTrue(summary.contains("| zdcache, approximate, 4 indexes | – | – | – | – |"));
     }
+
+    @Test void compactHeaderMemoryIsReportedNextToTheStandardFigure() {
+        var compact = List.of(new BenchmarkReport.Footprint("zdcache-buffered-keys", 100_000, 106.5));
+        var run = run().withCompactFootprint(compact);
+
+        String summary = BenchmarkReport.summary(run);
+        assertTrue(summary.contains("| get | put | Memory per entry | With compact headers |"));
+        assertTrue(summary.contains("| zdcache | 28 ns | 1,489 ns | 123 B | 107 B |"));
+        assertTrue(summary.contains("| Caffeine | – | – | – | – |"));
+        String html = BenchmarkReport.html(run, "<script>const DATA = " + BenchmarkReport.PLACEHOLDER + ";</script>");
+        assertTrue(html.contains("\"compactFootprint\":[{\"subject\":\"zdcache-buffered-keys\",\"size\":100000,\"bytesPerEntry\":106.5}]"));
+    }
+
+    @Test void aRunWithoutCompactHeaderMemoryShowsNoFigure() {
+        assertTrue(BenchmarkReport.summary(run()).contains("| zdcache | 28 ns | 1,489 ns | 123 B | – |"));
+    }
 }

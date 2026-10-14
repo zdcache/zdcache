@@ -212,9 +212,11 @@ const PARTS = [
       { title: "Mixed: writes", benchmark: "LockingBenchmark.mixed", metric: "mixedWrite", lowerIsBetter: false },
     ] },
   { title: "Memory", sized: true,
-    text: "Heap bytes per cached entry, measured with JOL, excluding the cached objects themselves.",
+    text: "Heap bytes per cached entry, measured with JOL, excluding the cached objects themselves. The second chart "
+      + "runs the JVM with compact object headers (-XX:+UseCompactObjectHeaders), which Java 25 supports but leaves off.",
     charts: [
-      { title: "Bytes per entry", footprint: true, lowerIsBetter: true },
+      { title: "Bytes per entry", footprint: "standard", lowerIsBetter: true },
+      { title: "Bytes per entry, compact object headers", footprint: "compact", lowerIsBetter: true },
     ] },
 ];
 
@@ -241,7 +243,8 @@ const UNITS = { "ns/op": "ns", "us/op": "µs", "ms/op": "ms", "ops/us": "M ops/s
 
 function estimate(chart, subject, size) {
   if (chart.footprint) {
-    const entry = DATA.footprint.find(f => f.subject === subject && f.size === size);
+    const entries = chart.footprint === "compact" ? (DATA.compactFootprint ?? []) : DATA.footprint;
+    const entry = entries.find(f => f.subject === subject && f.size === size);
     return entry ? { score: entry.bytesPerEntry, low: null, high: null, unit: "bytes" } : null;
   }
   const result = DATA.results.find(r => r.benchmark === benchmarkOf(chart) && r.subject === subject && r.size === size);

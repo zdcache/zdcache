@@ -18,15 +18,15 @@ USAGE
 case "$1" in
     -full)
         [ "$#" -eq 1 ] || usage 1
-        exec ./gradlew benchmarkPlan footprint benchmarkReport -Pbenchmark.plan=full -Pbenchmark.mode=full
+        exec ./gradlew benchmarkPlan footprint footprintCompact benchmarkReport -Pbenchmark.plan=full -Pbenchmark.mode=full
         ;;
     -quick)
         [ "$#" -eq 1 ] || usage 1
-        exec ./gradlew benchmarkPlan footprint benchmarkReport -Pbenchmark.plan=quick -Pbenchmark.mode=quick
+        exec ./gradlew benchmarkPlan footprint footprintCompact benchmarkReport -Pbenchmark.plan=quick -Pbenchmark.mode=quick
         ;;
     -jmh)
         [ "$#" -eq 2 ] || usage 1
-        exec ./gradlew jmh footprint benchmarkReport -Pjmh.args="$2" -Pbenchmark.mode=custom
+        exec ./gradlew jmh footprint footprintCompact benchmarkReport -Pjmh.args="$2" -Pbenchmark.mode=custom
         ;;
     -publish)
         [ "$#" -eq 1 ] || usage 1

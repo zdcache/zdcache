@@ -26,7 +26,16 @@ public final class BenchmarkReport {
     record Measurement(String benchmark, String subject, int size, String unit, Estimate primary, Map<String, Estimate> secondary) {}
     record Footprint(String subject, int size, double bytesPerEntry) {}
     record Run(String mode, String generatedAt, String javaVersion, int cpuCount, int minForks, int maxForks,
-               List<Measurement> results, List<Footprint> footprint) {}
+               List<Measurement> results, List<Footprint> footprint, List<Footprint> compactFootprint) {
+        Run(String mode, String generatedAt, String javaVersion, int cpuCount, int minForks, int maxForks,
+            List<Measurement> results, List<Footprint> footprint) {
+            this(mode, generatedAt, javaVersion, cpuCount, minForks, maxForks, results, footprint, List.of());
+        }
+
+        Run withCompactFootprint(List<Footprint> compact) {
+            return new Run(mode, generatedAt, javaVersion, cpuCount, minForks, maxForks, results, footprint, List.copyOf(compact));
+        }
+    }
 
     private record Row(String subject, String label) {}
 
@@ -74,8 +83,9 @@ public final class BenchmarkReport {
     private BenchmarkReport() { }
 
     public static void main(String[] args) throws IOException {
-        if (args.length != 4) {
-            throw new IllegalArgumentException("Usage: BenchmarkReport <jmh results.json> <footprint results.json> <mode> <output dir>");
+        if (args.length != 4 && args.length != 5) {
+            throw new IllegalArgumentException("Usage: BenchmarkReport <jmh results.json> <footprint results.json> <mode> <output dir>"
+                + " [<compact-header footprint results.json>]");
         }
         Path jmhResults = Path.of(args[0]);
         Path footprintResults = Path.of(args[1]);
@@ -84,6 +94,10 @@ public final class BenchmarkReport {
         List<Footprint> footprint = Files.exists(footprintResults) ? readFootprint(Files.readString(footprintResults)) : List.of();
         String generatedAt = Files.getLastModifiedTime(jmhResults).toInstant().truncatedTo(ChronoUnit.SECONDS).toString();
         Run run = read(Files.readString(jmhResults), footprint, args[2], generatedAt, Runtime.getRuntime().availableProcessors());
+        Path compactResults = args.length == 5 ? Path.of(args[4]) : null;
+        if (compactResults != null && Files.exists(compactResults)) {
+            run = run.withCompactFootprint(readFootprint(Files.readString(compactResults)));
+        }
 
         Files.createDirectories(output);
         Files.writeString(output.resolve("index.html"), html(run, template()));
@@ -137,17 +151,19 @@ public final class BenchmarkReport {
                 + "Lower is better for time and memory; higher is better for operations per second.%n%n",
             run.generatedAt(), run.javaVersion(), run.cpuCount(), forks(run), size));
 
-        out.append("**Single thread and memory**\n\n| | get | put | Memory per entry |\n|---|---:|---:|---:|\n");
+        out.append("**Single thread and memory**\n\n| | get | put | Memory per entry | With compact headers |\n|---|---:|---:|---:|---:|\n");
         for (Row row : LIBRARIES) {
             out.append("| ").append(row.label())
                 .append(" | ").append(cell(primary(run, "LibraryBenchmark.get", row.subject(), size), BenchmarkReport::time))
                 .append(" | ").append(cell(primary(run, "LibraryBenchmark.put", row.subject(), size), BenchmarkReport::time))
                 .append(" | ").append(cell(bytes(run, row.subject(), size), BenchmarkReport::memory))
+                .append(" | ").append(cell(compactBytes(run, row.subject(), size), BenchmarkReport::memory))
                 .append(" |\n");
         }
 
         out.append("\n**zdcache configurations, single thread**\n\n"
-            + "| | get | put | put in `atomically` | Prefix search | Memory per entry |\n|---|---:|---:|---:|---:|---:|\n");
+            + "| | get | put | put in `atomically` | Prefix search | Memory per entry | With compact headers |\n"
+            + "|---|---:|---:|---:|---:|---:|---:|\n");
         for (Row row : CONFIGURATIONS) {
             out.append("| ").append(row.label());
             for (String benchmark : List.of("get", "put", "putAtomically")) {
@@ -155,6 +171,7 @@ public final class BenchmarkReport {
             }
             out.append(" | ").append(cell(primary(run, "ConfigurationSearchBenchmark.prefixName", row.subject(), size), BenchmarkReport::time))
                 .append(" | ").append(cell(bytes(run, row.subject(), size), BenchmarkReport::memory))
+                .append(" | ").append(cell(compactBytes(run, row.subject(), size), BenchmarkReport::memory))
                 .append(" |\n");
         }
 
@@ -240,7 +257,15 @@ public final class BenchmarkReport {
     }
 
     private static Optional<Double> bytes(Run run, String subject, int size) {
-        return run.footprint().stream()
+        return bytes(run.footprint(), subject, size);
+    }
+
+    private static Optional<Double> compactBytes(Run run, String subject, int size) {
+        return bytes(run.compactFootprint(), subject, size);
+    }
+
+    private static Optional<Double> bytes(List<Footprint> footprint, String subject, int size) {
+        return footprint.stream()
             .filter(f -> f.subject().equals(subject) && f.size() == size)
             .map(Footprint::bytesPerEntry)
             .findFirst();
@@ -268,11 +293,15 @@ public final class BenchmarkReport {
             ObjectNode secondary = node.putObject("secondary");
             measurement.secondary().forEach((name, estimate) -> put(secondary.putObject(name), estimate));
         }
-        ArrayNode footprint = root.putArray("footprint");
-        for (Footprint entry : run.footprint()) {
-            footprint.addObject().put("subject", entry.subject()).put("size", entry.size()).put("bytesPerEntry", entry.bytesPerEntry());
-        }
+        putFootprint(root.putArray("footprint"), run.footprint());
+        putFootprint(root.putArray("compactFootprint"), run.compactFootprint());
         return root;
+    }
+
+    private static void putFootprint(ArrayNode array, List<Footprint> footprint) {
+        for (Footprint entry : footprint) {
+            array.addObject().put("subject", entry.subject()).put("size", entry.size()).put("bytesPerEntry", entry.bytesPerEntry());
+        }
     }
 
     private static void put(ObjectNode node, Estimate estimate) {

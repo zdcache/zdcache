@@ -442,6 +442,7 @@ None of the benchmarks put the caches under eviction pressure. Caffeine and cach
 | `LockingBenchmark.separateCallsAcrossTypes` | Calls per second, counted per group of three | 4 | 10,000 and 50,000 per type | The same read and two writes, without a block |
 | `LockingBenchmark.mixed` | Operations per second, reads and writes separately | 2 + 2 | 10,000 and 50,000 per type | Two threads read random types while two replace entries of their own type |
 | `MemoryFootprint` | Heap bytes per entry, measured with JOL | – | 1,000 to 50,000 | The cache filled with every person, not counting the person objects themselves |
+| `MemoryFootprint` with `-XX:+UseCompactObjectHeaders` | Heap bytes per entry with compact object headers | – | 1,000 to 50,000 | As above, on a JVM with the 8-byte object headers Java 25 offers but leaves off |
 
 Every entry is a `Person(id, name, city, age, tags)` with a six-letter random name, one of 50 cities, an age
 from 18 to 80 and up to three tags, generated from a fixed seed. `LockingBenchmark` instead uses four record
@@ -497,7 +498,7 @@ Only `LockingBenchmark` uses several types, so it is the only one where `Locking
 ./benchmark -publish               # publish the last full run
 ```
 
-Each plan file sets forks, warm-up and measurement per benchmark (`*.` for all, a benchmark name to override), can narrow a benchmark with `sizes` and `subjects`, and sets the memory-footprint sizes with `MemoryFootprint.sizes`. Each published value is the median of the per-fork averages, so one unlucky JVM does not decide a result. Results print to the terminal and are written to `build/reports/zdcache-benchmark/index.html`. The normal `./gradlew build` does not run the benchmark.
+Each plan file sets forks, warm-up and measurement per benchmark (`*.` for all, a benchmark name to override), can narrow a benchmark with `sizes` and `subjects`, and sets the memory-footprint sizes with `MemoryFootprint.sizes`. Each published value is the median of the per-fork averages, so one unlucky JVM does not decide a result. Results print to the terminal and are written to `build/reports/zdcache-benchmark/index.html`. The benchmark runs on a Java 25 JVM while the library stays compiled for Java 21; pass `-Pbenchmark.java=<version>` to use another, though the compact-header memory run needs Java 25 or later. The normal `./gradlew build` does not run the benchmark.
 
 Only a full run can be published. `./benchmark -publish` copies the report to `docs/benchmark/index.html`, which GitHub Pages serves, and refreshes the summary tables above; after a quick or custom run it refuses and asks for a full run.
 
