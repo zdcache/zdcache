@@ -46,6 +46,10 @@ public final class BenchmarkReport {
         new Row(Subjects.CACHE2K, "cache2k (full scan)"),
         new Row(Subjects.GUAVA, "Guava (full scan)"));
 
+    private static final List<Row> LOCKINGS = List.of(
+        new Row("zdcache-locking-per-type", "zdcache, `Locking.PER_TYPE`"),
+        new Row("zdcache-locking-single", "zdcache, `Locking.SINGLE`"));
+
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private BenchmarkReport() { }
@@ -81,8 +85,10 @@ public final class BenchmarkReport {
             Map<String, Estimate> secondary = new LinkedHashMap<>();
             result.path("secondaryMetrics").properties().forEach(entry -> secondary.put(entry.getKey(), estimate(entry.getValue())));
             String benchmark = result.path("benchmark").asText();
+            String subject = params.has("subject") ? params.path("subject").asText()
+                : "zdcache-locking-" + params.path("locking").asText().toLowerCase(Locale.ROOT).replace('_', '-');
             measurements.add(new Measurement(benchmark.substring(benchmark.lastIndexOf('.', benchmark.lastIndexOf('.') - 1) + 1),
-                params.path("subject").asText(), params.path("size").asInt(), primary.path("scoreUnit").asText(),
+                subject, params.path("size").asInt(), primary.path("scoreUnit").asText(),
                 estimate(primary), secondary));
             javaVersion = result.path("jdkVersion").asText(javaVersion);
             minForks = Math.min(minForks, result.path("forks").asInt());
@@ -129,6 +135,22 @@ public final class BenchmarkReport {
                 .append(" | ").append(cell(secondary(run, "mixedRead", row.subject()), BenchmarkReport::throughput))
                 .append(" | ").append(cell(secondary(run, "mixedWrite", row.subject()), BenchmarkReport::throughput))
                 .append(" |\n");
+        }
+
+        out.append("\n**Locking across four types (million operations per second)**\n\n"
+            + "| | Writes to separate types | `atomically` blocks | Same calls without a block | Mixed: reads | Mixed: writes |\n"
+            + "|---|---:|---:|---:|---:|---:|\n");
+        for (Row row : LOCKINGS) {
+            out.append("| ").append(row.label());
+            for (String benchmark : List.of("writesToSeparateTypes", "atomicBlocksAcrossTypes", "separateCallsAcrossTypes")) {
+                out.append(" | ").append(cell(primary(run, "LockingBenchmark." + benchmark, row.subject(), size).map(Measurement::primary),
+                    BenchmarkReport::throughput));
+            }
+            for (String metric : List.of("mixedRead", "mixedWrite")) {
+                out.append(" | ").append(cell(primary(run, "LockingBenchmark.mixed", row.subject(), size)
+                    .map(m -> m.secondary().get(metric)), BenchmarkReport::throughput));
+            }
+            out.append(" |\n");
         }
 
         out.append("\n**Search**\n\n| | Prefix | Exact | Compound | Range |\n|---|---:|---:|---:|---:|\n");

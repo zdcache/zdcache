@@ -83,7 +83,7 @@ class BenchmarkReportTest {
         assertTrue(summary.contains("| Caffeine | – | 56 | 0.55 |"));
         assertTrue(summary.contains("| CQEngine, 4 indexes | 19 µs | – | – | – |"));
         assertTrue(summary.contains("| CQEngine, 4 indexes | – | – | – |"));
-        assertEquals(3, summary.split("\\|---\\|").length - 1);
+        assertEquals(4, summary.split("\\|---\\|").length - 1);
     }
 
     @Test void numbersKeepTwoSignificantDigitsBelowTen() {
@@ -138,5 +138,26 @@ class BenchmarkReportTest {
             .readTree("{\"score\": 9, \"rawData\": [[10.0], [20.0], [40.0], [400.0]]}");
 
         assertEquals(new BenchmarkReport.Estimate(30.0, 10.0, 400.0), BenchmarkReport.estimate(metric));
+    }
+
+    @Test void lockingResultsAreNamedAfterTheirStrategyAndSummarised() {
+        String json = """
+            [
+              {"benchmark": "io.github.zdcache.bench.LockingBenchmark.writesToSeparateTypes", "jdkVersion": "21", "forks": 3,
+               "params": {"size": "100000", "locking": "SINGLE"},
+               "primaryMetric": {"score": 1.5, "scoreUnit": "ops/us", "rawData": [[1.4, 1.6]]}, "secondaryMetrics": {}},
+              {"benchmark": "io.github.zdcache.bench.LockingBenchmark.mixed", "jdkVersion": "21", "forks": 3,
+               "params": {"size": "100000", "locking": "PER_TYPE"},
+               "primaryMetric": {"score": 30, "scoreUnit": "ops/us", "rawData": [[30.0]]},
+               "secondaryMetrics": {"mixedRead": {"score": 28, "rawData": [[28.0]]}, "mixedWrite": {"score": 2, "rawData": [[2.0]]}}}
+            ]
+            """;
+        var run = BenchmarkReport.read(json, List.of(), "full", "t", 4);
+
+        assertEquals("zdcache-locking-single", run.results().getFirst().subject());
+        assertEquals("zdcache-locking-per-type", run.results().get(1).subject());
+        String summary = BenchmarkReport.summary(run);
+        assertTrue(summary.contains("| zdcache, `Locking.SINGLE` | 1.5 | – | – | – | – |"));
+        assertTrue(summary.contains("| zdcache, `Locking.PER_TYPE` | – | – | – | 28 | 2.0 |"));
     }
 }

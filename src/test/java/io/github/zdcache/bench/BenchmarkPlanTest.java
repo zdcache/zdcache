@@ -86,4 +86,11 @@ class BenchmarkPlanTest {
         assertTrue(thrown.getMessage().contains("1 to 1000000"));
         assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "MemoryFootprint.sizes=99999999\n"));
     }
+
+    @Test void theLockingBenchmarkTakesSizesButNotSubjects() {
+        assertEquals(List.of("10000"), BenchmarkPlan.parse(EVERY + "LockingBenchmark.sizes=10000\n").settings("LockingBenchmark").sizes());
+        var thrown = assertThrows(IllegalArgumentException.class,
+            () -> BenchmarkPlan.parse(EVERY + "LockingBenchmark.subjects=caffeine\n"));
+        assertTrue(thrown.getMessage().contains("locking strategies"));
+    }
 }
