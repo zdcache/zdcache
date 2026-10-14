@@ -83,7 +83,9 @@ tasks.register<JavaExec>("footprint") {
     val report = layout.buildDirectory.file("reports/footprint/results.md")
     outputs.file(report)
     outputs.upToDateWhen { false }
-    argumentProviders.add(CommandLineArgumentProvider { listOf(report.get().asFile.absolutePath) })
+    val plan = benchmarkPlan.get()
+    inputs.file(plan)
+    argumentProviders.add(CommandLineArgumentProvider { listOf(report.get().asFile.absolutePath, plan.asFile.absolutePath) })
 }
 
 mavenPublishing {
@@ -114,12 +116,30 @@ mavenPublishing {
     }
 }
 
+val benchmarkPlan = providers.gradleProperty("benchmark.plan").orElse("full")
+    .map { layout.projectDirectory.file("src/jmh/resources/benchmark-$it.properties") }
+
+tasks.register<JavaExec>("benchmarkPlan") {
+    description = "Runs every JMH benchmark with src/jmh/resources/benchmark-<plan>.properties; choose -Pbenchmark.plan=full or quick."
+    group = "verification"
+    classpath = jmh.runtimeClasspath
+    mainClass = "io.github.zdcache.bench.BenchmarkRunner"
+    val plan = benchmarkPlan.get()
+    val results = layout.buildDirectory.file("reports/jmh/results.json")
+    inputs.file(plan)
+    outputs.file(results)
+    outputs.upToDateWhen { false }
+    argumentProviders.add(CommandLineArgumentProvider {
+        listOf(plan.asFile.absolutePath, results.get().asFile.absolutePath)
+    })
+}
+
 tasks.register<JavaExec>("benchmarkReport") {
     description = "Builds the interactive benchmark report from the last JMH and footprint results."
     group = "verification"
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass = "io.github.zdcache.bench.BenchmarkReport"
-    mustRunAfter("jmh", "footprint")
+    mustRunAfter("jmh", "benchmarkPlan", "footprint")
     val jmhResults = layout.buildDirectory.file("reports/jmh/results.json")
     val footprintResults = layout.buildDirectory.file("reports/footprint/results.json")
     val output = layout.buildDirectory.dir("reports/zdcache-benchmark")

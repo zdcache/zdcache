@@ -1,11 +1,8 @@
 # ZDCache — Searchable Dimensions Cache (Java 21, Gradle)
 
-A **baseline implementation** of an in-process, multi-type, per-type-bounded object
-cache with specification-driven searchable dimensions and secondary indexes. Cache writes are explicitly
-submitted; the cache does **not** track mutations to objects returned by reference.
-
-This is a starting point for development and benchmarking, not a production-ready
-library. See the limitations below.
+An in-process, multi-type, per-type-bounded object cache with specification-driven searchable dimensions 
+and secondary indexes. Cache writes are explicitly submitted; the cache does **not** track mutations to 
+objects returned by reference.
 
 ## Installation
 
@@ -21,8 +18,8 @@ library. See the limitations below.
 implementation("io.github.zdcache:zdcache:0.1.0")
 ```
 
-zdcache has no runtime dependencies. To use `IdentityStoreFactory.caffeine()`, add
-`com.github.ben-manes.caffeine:caffeine` as well.
+zdcache has no runtime dependencies, but the cache can use Caffeine under the hood if configured so.
+To use `IdentityStoreFactory.caffeine()`, add `com.github.ben-manes.caffeine:caffeine` as well.
 
 ## Requirements and build
 
@@ -170,59 +167,59 @@ zdcache is compared with three key-value caches (Caffeine, cache2k and Guava) an
 > **Disclaimer:** these numbers were collected by running the benchmark on the author's development machine. Results vary with hardware, JVM, load and data shape, so treat them as an indication of gains and losses, not as guarantees. Run the benchmark on your own machine and data before deciding.
 
 <!-- benchmark-summary:start -->
-Measured 2026-10-13T20:34:54Z on Java 21.0.6 with 11 CPUs, 3 forks per benchmark, at 100,000 entries. Lower is better for time and memory; higher is better for operations per second.
+Measured 2026-10-13T22:57:53Z on Java 21.0.6 with 11 CPUs, 3 forks per benchmark, at 100,000 entries. Lower is better for time and memory; higher is better for operations per second.
 
 **Single thread and memory**
 
 | | get | put | Memory per entry |
 |---|---:|---:|---:|
-| zdcache | 24 ns | 84 ns | 123 B |
-| zdcache, 4 indexes | 34 ns | 2,465 ns | 424 B |
-| zdcache, approximate recency | 24 ns | 89 ns | – |
-| zdcache, approximate, 4 indexes | 32 ns | 2,433 ns | – |
-| Caffeine | 30 ns | 111 ns | 109 B |
-| cache2k | 12 ns | 48 ns | 107 B |
-| Guava | 36 ns | 108 ns | 99 B |
-| CQEngine, 4 indexes | 336 ns | 4,319 ns | 769 B |
+| zdcache | 24 ns | 76 ns | 123 B |
+| zdcache, 4 indexes | 36 ns | 2,292 ns | 424 B |
+| zdcache, approximate recency | 24 ns | 85 ns | – |
+| zdcache, approximate, 4 indexes | 33 ns | 2,361 ns | – |
+| Caffeine | 28 ns | 106 ns | 109 B |
+| cache2k | 12 ns | 34 ns | 107 B |
+| Guava | 38 ns | 89 ns | 99 B |
+| CQEngine, 4 indexes | 347 ns | 4,290 ns | 769 B |
 
 **Concurrent, 8 threads (million operations per second)**
 
 | | Reads only | Mixed: reads | Mixed: writes |
 |---|---:|---:|---:|
-| zdcache | 22 | 12 | 0.58 |
-| zdcache, 4 indexes | 31 | 20 | 0.14 |
-| zdcache, approximate recency | 59 | 22 | 2.9 |
-| zdcache, approximate, 4 indexes | 26 | 32 | 0.12 |
-| Caffeine | 103 | 50 | 6.8 |
-| cache2k | 178 | 82 | 6.9 |
-| Guava | 13 | 17 | 0.00 |
-| CQEngine, 4 indexes | 15 | 12 | 0.09 |
+| zdcache | 45 | 12 | 0.50 |
+| zdcache, 4 indexes | 39 | 24 | 0.14 |
+| zdcache, approximate recency | 90 | 39 | 3.1 |
+| zdcache, approximate, 4 indexes | 49 | 31 | 0.13 |
+| Caffeine | 100 | 58 | 7.5 |
+| cache2k | 198 | 81 | 6.6 |
+| Guava | 13 | 16 | 0.01 |
+| CQEngine, 4 indexes | 16 | 12 | 0.10 |
 
 **Search**
 
 | | Prefix | Exact | Compound | Range |
 |---|---:|---:|---:|---:|
-| zdcache, 4 indexes | 1.3 µs | 14 µs | 2.9 µs | 155 µs |
-| CQEngine, 4 indexes | 19 µs | 19 µs | 49 µs | 204 µs |
-| Caffeine (full scan) | 924 µs | 1,267 µs | 1,143 µs | 1,300 µs |
-| cache2k (full scan) | 2,225 µs | 2,691 µs | 2,694 µs | 2,402 µs |
-| Guava (full scan) | 2,496 µs | 3,142 µs | 3,184 µs | 3,014 µs |
+| zdcache, 4 indexes | 1.3 µs | 13 µs | 2.4 µs | 143 µs |
+| CQEngine, 4 indexes | 20 µs | 21 µs | 38 µs | 210 µs |
+| Caffeine (full scan) | 917 µs | 1,137 µs | 1,143 µs | 1,322 µs |
+| cache2k (full scan) | 2,823 µs | 2,780 µs | 2,654 µs | 2,975 µs |
+| Guava (full scan) | 2,197 µs | 2,735 µs | 2,887 µs | 2,258 µs |
 <!-- benchmark-summary:end -->
 
-How to read it: on one thread, zdcache's key lookup is as fast as Caffeine's or faster in both recency modes (24 ns for `get`, 84–89 ns for `put`), with cache2k the fastest, and keeping four indexes up to date costs about 2.4 µs per `put`. Searches through indexes are about 15× faster than CQEngine for prefix and compound queries, 1.3–1.4× for exact and range queries, and 8–2,000× faster than scanning a cache. Under concurrent load the default strict LRU store reads at 22 M/s in this run (about 40 M/s in other runs, depending on which reader threads share a read buffer) and writes at a tenth of Caffeine's rate. With `recency(Recency.APPROXIMATE)` zdcache reaches about 57% of Caffeine's read throughput and 43% of its write throughput, giving up exact LRU order under heavy contention. Choose zdcache when you look cached objects up by more than their key; for key-only caching with many concurrent writes, Caffeine or cache2k fits better.
+How to read it: on one thread, zdcache's key lookup is as fast as Caffeine's or faster in both recency modes (24 ns for `get`, 76–85 ns for `put`), with cache2k the fastest, and keeping four indexes up to date costs about 2.3 µs per `put`. Searches through indexes are about 15× faster than CQEngine for prefix and compound queries, 1.5× for exact and range queries, and 9–2,000× faster than scanning a cache. Under concurrent load the default strict LRU store reads at about 45% of Caffeine's rate and writes at under a tenth of it. With `recency(Recency.APPROXIMATE)` zdcache reads at 65–90% of Caffeine's rate between runs and writes at about 40% of it, giving up exact LRU order under heavy contention. Choose zdcache when you look cached objects up by more than their key; for key-only caching with many concurrent writes, Caffeine or cache2k fits better.
 
 None of the benchmarks put the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts in LRU order per segment and zdcache in strict LRU order by default. CQEngine never evicts.
 
 ### Running the benchmark
 
 ```bash
-./benchmark -full                  # every JMH benchmark with 3 forks, plus memory footprint (about an hour)
-./benchmark -quick                 # every JMH benchmark with 1 fork and short iterations
+./benchmark -full                  # settings in src/jmh/resources/benchmark-full.properties (about 12 minutes)
+./benchmark -quick                 # settings in src/jmh/resources/benchmark-quick.properties (about 5 minutes)
 ./benchmark -jmh "SearchBenchmark -f 1 -p subject=zdcache-buffered-indexed,cqengine"   # custom JMH options
 ./benchmark -publish               # publish the last full run
 ```
 
-Results print to the terminal and are written to `build/reports/zdcache-benchmark/index.html`. The normal `./gradlew build` does not run the benchmark.
+Each plan file sets forks, warm-up and measurement per benchmark (`*.` for all, a benchmark name to override), can narrow a benchmark with `sizes` and `subjects`, and sets the memory-footprint sizes with `MemoryFootprint.sizes`. Each published value is the median of the per-fork averages, so one unlucky JVM does not decide a result. Results print to the terminal and are written to `build/reports/zdcache-benchmark/index.html`. The normal `./gradlew build` does not run the benchmark.
 
 Only a full run can be published. `./benchmark -publish` copies the report to `docs/benchmark/index.html`, which GitHub Pages serves, and refreshes the summary tables above; after a quick or custom run it refuses and asks for a full run.
 

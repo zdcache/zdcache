@@ -198,12 +198,12 @@ const UNITS = { "ns/op": "ns", "us/op": "µs", "ms/op": "ms", "ops/us": "M ops/s
 function estimate(chart, subject, size) {
   if (chart.footprint) {
     const entry = DATA.footprint.find(f => f.subject === subject && f.size === size);
-    return entry ? { score: entry.bytesPerEntry, error: null, unit: "bytes" } : null;
+    return entry ? { score: entry.bytesPerEntry, low: null, high: null, unit: "bytes" } : null;
   }
   const result = DATA.results.find(r => r.benchmark === chart.benchmark && r.subject === subject && r.size === size);
   if (!result) return null;
   const metric = chart.metric ? result.secondary[chart.metric] : result.primary;
-  return metric ? { score: metric.score, error: metric.error, unit: result.unit } : null;
+  return metric ? { score: metric.score, low: metric.low, high: metric.high, unit: result.unit } : null;
 }
 
 function sizeFor(part) {
@@ -249,8 +249,7 @@ function niceAbove(value) {
 function logDomain(chart, part) {
   const sizes = part.sized ? SIZES.map(s => s.size) : [LARGEST];
   const values = sizes.flatMap(size => rowsFor(chart, part, size).flatMap(({ value }) => {
-    const error = value.error ?? 0;
-    return [value.score, value.score + error, value.score - error > 0 ? value.score - error : value.score];
+    return [value.score, value.high ?? value.score, value.low ?? value.score];
   }));
   const low = Math.log10(niceBelow(Math.min(...values) * 0.9));
   const high = Math.log10(niceAbove(Math.max(...values) * 1.1));
@@ -283,11 +282,11 @@ function showTooltip(anchor, chart, entry, size) {
   value.className = "value";
   value.textContent = format(entry.value.score, entry.value.unit);
   tooltip.append(heading, value);
-  if (entry.value.error != null) {
-    const error = document.createElement("div");
-    error.className = "detail";
-    error.textContent = `± ${format(entry.value.error, entry.value.unit)} (99.9% confidence interval)`;
-    tooltip.appendChild(error);
+  if (entry.value.low != null) {
+    const range = document.createElement("div");
+    range.className = "detail";
+    range.textContent = `Forks ranged from ${format(entry.value.low, entry.value.unit)} to ${format(entry.value.high, entry.value.unit)}`;
+    tooltip.appendChild(range);
   }
   const direction = document.createElement("div");
   direction.className = "detail";
@@ -341,13 +340,12 @@ function drawChart(card, chart, part) {
     el("text", { x: margin.left - 12, y: y + 4, "text-anchor": "end", class: "row-label" + (entry.row.highlight ? " highlight" : "") }, svg)
       .textContent = entry.label;
     el("line", { x1: margin.left, x2: x(entry.value.score), y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }, svg);
-    const { score, error } = entry.value;
-    if (error != null && error > 0) {
-      const lowEnd = Math.max(score - error, 10 ** domain.low);
-      el("line", { x1: x(lowEnd), x2: x(score + error), y1: y, y2: y, stroke: color, "stroke-width": 2, "stroke-linecap": "round", opacity: 0.45 }, svg);
+    const { score, low, high } = entry.value;
+    if (low != null && high > low) {
+      el("line", { x1: x(low), x2: x(high), y1: y, y2: y, stroke: color, "stroke-width": 2, "stroke-linecap": "round", opacity: 0.45 }, svg);
     }
     el("circle", { cx: x(score), cy: y, r: 5, fill: color, stroke: "var(--surface-1)", "stroke-width": 2 }, svg);
-    el("text", { x: Math.max(x(score), x(score + (error ?? 0))) + 10, y: y + 4, class: "value-label" }, svg)
+    el("text", { x: Math.max(x(score), x(high ?? score)) + 10, y: y + 4, class: "value-label" }, svg)
       .textContent = format(score, unit);
   });
 
@@ -397,7 +395,8 @@ function partTable(part) {
     tr.insertCell().textContent = part.title === "Search" && row.scan ? row.label + " (full scan)" : row.label;
     for (const value of values) {
       tr.insertCell().textContent = !value ? "–"
-        : format(value.score, value.unit) + (value.error != null ? " ± " + format(value.error, value.unit) : "");
+        : format(value.score, value.unit) + (value.low != null
+          ? ` (${format(value.low, value.unit)}–${format(value.high, value.unit)})` : "");
     }
   }
   return node;
@@ -488,9 +487,9 @@ window.addEventListener("resize", () => {
 });
 document.getElementById("note").textContent =
   (DATA.mode !== "full" ? `This is a ${DATA.mode} run, not a full run. ` : "")
-  + `Run ${DATA.generatedAt} on Java ${DATA.javaVersion} with ${DATA.cpuCount} CPUs, ${DATA.forks} JMH `
-  + `${DATA.forks === 1 ? "fork" : "forks"} per measurement. Times are JMH averages per operation and throughput is `
-  + "operations per microsecond (million per second); whiskers show JMH's 99.9% confidence interval. "
+  + `Run ${DATA.generatedAt} on Java ${DATA.javaVersion} with ${DATA.cpuCount} CPUs, ${DATA.forks.replace(" fork", " JMH fork")} `
+  + "per measurement. Times are JMH averages per operation and throughput is "
+  + "operations per microsecond (million per second); each value is the median of the per-fork averages and whiskers span the slowest and fastest fork. "
   + "No benchmark puts the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts "
   + "in LRU order per segment and zdcache in strict LRU order. Guava gets 5% extra capacity so its per-segment limits "
   + "do not evict entries early. CQEngine never evicts, plans the compound query over separate hash and navigable "
