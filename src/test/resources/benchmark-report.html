@@ -194,7 +194,7 @@ const PARTS = [
       { title: "Age range", benchmark: both("SearchBenchmark.rangeAge"), lowerIsBetter: true },
     ] },
   { title: "Concurrent", sized: true,
-    text: "Eight threads: all reading, or six reading while two write.",
+    text: "Four threads: all reading, or three reading while one writes.",
     charts: [
       { title: "Reads only", benchmark: "ConcurrentBenchmark.readOnly", lowerIsBetter: false },
       { title: "Mixed: reads", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedRead", lowerIsBetter: false },
@@ -202,7 +202,7 @@ const PARTS = [
     ] },
   { title: "Locking across types", sized: true,
     text: "Four types of entries, with indexes on name and city, in the default buffered store. Four threads write to "
-      + "their own type, or run blocks that read one type and write two; in mixed load six threads read random types "
+      + "their own type, or run blocks that read one type and write two; in mixed load two threads read random types "
       + "while two write. Only the locking strategy differs.",
     charts: [
       { title: "Writes to separate types", benchmark: "LockingBenchmark.writesToSeparateTypes", lowerIsBetter: false },
