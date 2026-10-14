@@ -94,6 +94,18 @@ var forThroughput = ZDCache.builder()
     .recency(Recency.APPROXIMATE)
     .build();
 
+// One lock per type is the default; Locking.SINGLE shares one lock across all types:
+var serialized = ZDCache.builder()
+    .locking(Locking.SINGLE)
+    .build();
+
+// Several calls across types as one step that no other thread sees half done:
+cache.atomically(() -> {
+    Person simon = cache.get(Person.class, 1L);
+    cache.put(new Person(simon.id(), simon.name(), simon.age() + 1, simon.addresses()));
+    cache.remove(Person.class, 2L);
+});
+
 // Reads that do not count as use, and housekeeping:
 Person quiet = cache.peek(Person.class, 1L);
 boolean cached = cache.contains(Person.class, 2L);
@@ -144,8 +156,14 @@ searchable type raises `UnknownSearchDimensionException`.
 
 ## Identity, specification and update rules
 
-- Each class has its own capacity, `ReentrantReadWriteLock`, `IdentityStore`, specification,
-  and indexes. Operations on different types are independent.
+- Each class has its own capacity, `IdentityStore`, specification and indexes, and by
+  default its own `ReentrantReadWriteLock`, so operations on different types are
+  independent. `locking(Locking.SINGLE)` makes all types share one lock: searches
+  still run in parallel, but a write to any type waits for writes to every type.
+- `atomically(...)` runs several calls, across types, so that no other thread sees
+  the state in between. It takes the shared lock, or every type's lock in a fixed
+  order, and a lock-free `get` that meets a running block waits for it. Nested
+  blocks run inside the outer one.
 - `put(entity, specification)` registers that spec on first use. Further inserts
   with a supplied spec must pass **the same specification object**. A different
   spec instance throws `ConflictingSearchSpecificationException`, even if it was
@@ -254,7 +272,8 @@ Only a full run can be published. `./benchmark -publish` copies the report to `d
 3. Searches share a per-type read lock and `get` takes no type lock, but writes take
    that lock exclusively, so concurrent writes to one type are serialized. Key-only
    types on stores with concurrent writes (approximate recency, Caffeine) are the
-   exception. No cross-type atomic operations.
+   exception. Cross-type atomicity needs an `atomically(...)` block, which blocks
+   every other writer and reader for its duration.
 4. `SearchSpecification` can traverse nested lists of properties. Intersections,
    fuzzy text, ranked similarity, geospatial indexing, sorting, pagination,
    expiration, metrics, and persistence are not yet implemented.

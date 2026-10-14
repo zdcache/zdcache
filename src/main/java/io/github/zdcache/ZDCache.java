@@ -3,6 +3,8 @@ package io.github.zdcache;
 import io.github.zdcache.internal.Getters;
 import io.github.zdcache.internal.TypeCache;
 import io.github.zdcache.store.IdentityStoreFactory;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -13,6 +15,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.StringJoiner;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Supplier;
 
 /**
  * In-process, multi-type cache with per-type capacity/lock and specification-defined indexes.
@@ -28,12 +33,17 @@ public final class ZDCache {
     private final Map<Class<?>, Integer> capacities;
     private final IdentityStoreFactory stores;
     private final Recency recency;
+    private final Locking locking;
+    private final ReentrantReadWriteLock sharedLock = new ReentrantReadWriteLock();
+    private final AtomicLong typeOrder = new AtomicLong();
+    private final ThreadLocal<List<TypeCache<?, ?>>> exclusive = new ThreadLocal<>();
 
     private ZDCache(Builder builder) {
         defaultMaxPerType = builder.defaultMaxPerType;
         capacities = Map.copyOf(builder.capacities);
         stores = builder.stores;
         recency = builder.recency;
+        locking = builder.locking;
     }
 
     public static Builder builder() { return new Builder(); }
@@ -43,6 +53,7 @@ public final class ZDCache {
         private final Map<Class<?>, Integer> capacities = new HashMap<>();
         private IdentityStoreFactory stores = IdentityStoreFactory.bufferedLru();
         private Recency recency;
+        private Locking locking = Locking.PER_TYPE;
 
         public Builder defaultMaxPerType(int maximum) {
             positive(maximum);
@@ -62,6 +73,11 @@ public final class ZDCache {
 
         public Builder recency(Recency recency) {
             this.recency = Objects.requireNonNull(recency);
+            return this;
+        }
+
+        public Builder locking(Locking locking) {
+            this.locking = Objects.requireNonNull(locking);
             return this;
         }
 
@@ -164,11 +180,46 @@ public final class ZDCache {
             if (cache == null) {
                 int capacity = capacities.getOrDefault(type, defaultMaxPerType);
                 cache = new TypeCache<>(specification,
-                    recency == null ? stores.create(capacity) : stores.create(capacity, recency));
+                    recency == null ? stores.create(capacity) : stores.create(capacity, recency),
+                    locking == Locking.SINGLE ? sharedLock : new ReentrantReadWriteLock(), typeOrder.getAndIncrement());
                 types.put(type, cache);
                 resolved.clear();
+                List<TypeCache<?, ?>> held = exclusive.get();
+                if (held != null) {
+                    cache.beginExclusive();
+                    held.add(cache);
+                }
             }
             return (TypeCache<T, ID>) cache;
+        }
+    }
+
+    public void atomically(Runnable work) {
+        Objects.requireNonNull(work);
+        atomically(() -> {
+            work.run();
+            return null;
+        });
+    }
+
+    public <R> R atomically(Supplier<R> work) {
+        Objects.requireNonNull(work);
+        if (exclusive.get() != null) return work.get();
+        synchronized (registry) {
+            List<TypeCache<?, ?>> held = new ArrayList<>();
+            try {
+                List<TypeCache<?, ?>> caches = new ArrayList<>(types.values());
+                caches.sort(Comparator.comparingLong(TypeCache::order));
+                for (TypeCache<?, ?> cache : caches) {
+                    cache.beginExclusive();
+                    held.add(cache);
+                }
+                exclusive.set(held);
+                return work.get();
+            } finally {
+                exclusive.remove();
+                for (int i = held.size() - 1; i >= 0; i--) held.get(i).endExclusive();
+            }
         }
     }
 
