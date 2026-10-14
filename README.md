@@ -240,83 +240,153 @@ cannot proceed until the block ends. A block nested inside another runs as part 
 `PER_TYPE` a block takes one lock per type, so blocks cost more with many types; with `SINGLE` they take one
 lock, but ordinary writes to different types no longer run in parallel.
 
+## Choosing a configuration
+
+The default, `ZDCache.builder().build()`, gives the buffered LRU store with strict recency and one lock per
+type. It suits most applications: on one thread its key lookup keeps pace with Caffeine's at every measured
+size (23 against 27 ns for `get` and 77 against 80 ns for `put` at 50,000 entries, and faster below that),
+eviction follows exact LRU order, and concurrent reads reach about 40% of Caffeine's rate. The figures come
+from the published benchmark run below.
+
+| Situation | Configuration | Why |
+|---|---|---|
+| Most applications | The default | Keeps pace with Caffeine on one thread, strict LRU, every search through indexes |
+| Many threads reading and writing | `recency(Recency.APPROXIMATE)` | At 50,000 entries under mixed load, 1.6× the reads and 3× the writes of strict mode; reads at 30–80% of Caffeine's rate and writes at about 30%, depending on size |
+| Different threads writing different types | `locking(Locking.PER_TYPE)`, the default | Writes to separate types run about six times faster than with `SINGLE` |
+| Most writes in `atomically` blocks, or writes must happen one at a time | `locking(Locking.SINGLE)` | A block takes one lock instead of one per type; blocks run at the same rate under either setting, and on one thread `SINGLE` costs about the same |
+| One thread, tight on memory | `identityStore(IdentityStoreFactory.linkedHashMap())` | 99 instead of 123 bytes per entry and faster single-threaded writes (59 against 96 ns at 50,000 entries), but concurrent reads run three to four times slower |
+| Caffeine as the identity store | Not recommended | Not LRU, slower single-threaded `get` (35–47 ns against 17–25 ns) and the most memory per entry of the zdcache stores, though under eight threads it reads faster than the default store |
+
+Approximate recency is sensitive to running more threads than there are fast cores. With four threads only
+reading it matched or beat strict mode, but in the eight-thread benchmark below, run on a machine with five
+performance cores, it read more slowly than strict mode at 50,000 entries (33 against 55 million per second)
+and varied widely between forks. Measure with your own thread count before switching.
+
+Indexes matter more for performance than the store. Each one is updated on every `put`: four indexes take a
+`put` from 30–80 ns to 1–2 µs, depending on size, and memory from 123 to 434 bytes per entry, so declare only
+the dimensions you search on. A `put` inside its own `atomically` block costs about 100 ns more, which only
+shows without indexes. A compound index pays off for combinations you search often: at 50,000 entries an exact
+city with an age range takes 1.2 µs as a compound, against 46 µs for the age range on its own, because the
+city narrows the matches first. Method references keep dimension names right when properties are renamed.
+
+```java
+record Person(long id, String name, String city, int age) {}
+
+var cache = ZDCache.builder()
+    .defaultMaxPerType(100_000)                                            // room for the working set
+    .build();                                                              // buffered LRU, strict, PER_TYPE
+
+var spec = SearchSpecification.builder(IdentityDimension.of(Person.class, "id", Person::id))
+    .prefix(Person::name)                                                  // only what you search on
+    .compound("cityAge", c -> c.exact(Person::city).range(Person::age))    // for a frequent combination
+    .build();
+```
+
+Switch to `recency(Recency.APPROXIMATE)` when profiling shows many threads waiting on the cache.
+
 ## Benchmark
 
-zdcache is compared with three key-value caches (Caffeine, cache2k and Guava) and with CQEngine, an indexed in-memory collection. JMH measures single-threaded `get` and `put`, eight threads reading and writing concurrently, and prefix, exact, compound and range searches at 10,000 and 100,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
+There are two sets of benchmarks. The configuration benchmarks run zdcache alone, in every identity store with and without indexes and with `Locking.SINGLE`, measuring `get`, `put`, `put` inside `atomically` and searches. The library benchmarks compare zdcache's two recommended configurations, the default and approximate recency, with Caffeine, cache2k, Guava, Ehcache, a plain `ConcurrentHashMap`, embedded Hazelcast and CQEngine. Both measure single-threaded `get` and `put` and prefix, exact, compound and range searches at 1,000, 3,000, 5,000, 10,000 and 50,000 entries. Eight threads reading and writing concurrently, and locking across four types, are measured at 10,000 and 50,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
 
-**[Open the full interactive report](https://zdcache.github.io/zdcache/benchmark/)** for every library and every zdcache identity store, with confidence intervals and a table view.
+**[Open the full interactive report](https://zdcache.github.io/zdcache/benchmark/)** for every library and every zdcache configuration at every size, with confidence intervals and a table view.
 
 > **Disclaimer:** these numbers were collected by running the benchmark on the author's development machine. Results vary with hardware, JVM, load and data shape, so treat them as an indication of gains and losses, not as guarantees. Run the benchmark on your own machine and data before deciding.
 
 <!-- benchmark-summary:start -->
-Measured 2026-10-14T11:09:47Z on Java 21.0.6 with 11 CPUs, 3 forks per benchmark, at 100,000 entries. Lower is better for time and memory; higher is better for operations per second.
+Measured 2026-10-14T16:41:51Z on Java 21.0.6 with 11 CPUs, 3 forks per benchmark, at 50,000 entries. Lower is better for time and memory; higher is better for operations per second.
 
 **Single thread and memory**
 
 | | get | put | Memory per entry |
 |---|---:|---:|---:|
-| zdcache | 25 ns | 101 ns | 123 B |
-| zdcache, 4 indexes | 40 ns | 2,508 ns | 424 B |
-| zdcache, approximate recency | 27 ns | 133 ns | – |
-| zdcache, approximate, 4 indexes | 48 ns | 2,448 ns | – |
-| Caffeine | 29 ns | 121 ns | 109 B |
-| cache2k | 12 ns | 37 ns | 107 B |
-| Guava | 38 ns | 105 ns | 99 B |
-| CQEngine, 4 indexes | 396 ns | 4,255 ns | 769 B |
+| zdcache | 23 ns | 77 ns | 123 B |
+| zdcache, 4 indexes | 24 ns | 2,123 ns | 434 B |
+| zdcache, approximate recency | 23 ns | 68 ns | 123 B |
+| zdcache, approximate, 4 indexes | 25 ns | 2,130 ns | 434 B |
+| Caffeine | 27 ns | 80 ns | 109 B |
+| cache2k | 12 ns | 26 ns | 107 B |
+| Guava | 38 ns | 70 ns | 99 B |
+| Ehcache | 34 ns | 107 ns | 131 B |
+| ConcurrentHashMap, no eviction | 6.2 ns | 19 ns | 67 B |
+| Hazelcast, 3 indexes | 7,954 ns | 16,775 ns | – |
+| CQEngine, 4 indexes | 264 ns | 3,623 ns | 775 B |
+
+**zdcache configurations, single thread**
+
+| | get | put | put in `atomically` | Prefix search | Memory per entry |
+|---|---:|---:|---:|---:|---:|
+| Buffered LRU (default) | 25 ns | 96 ns | 221 ns | – | 123 B |
+| Buffered LRU, 4 indexes | 26 ns | 2,143 ns | 2,155 ns | 0.67 µs | 434 B |
+| Approximate recency | 23 ns | 79 ns | 218 ns | – | 123 B |
+| Approximate recency, 4 indexes | 26 ns | 2,207 ns | 2,221 ns | 0.67 µs | 434 B |
+| LinkedHashMap store | 21 ns | 59 ns | 201 ns | – | 99 B |
+| LinkedHashMap store, 4 indexes | 25 ns | 2,102 ns | 2,179 ns | 0.67 µs | 410 B |
+| Caffeine store | 45 ns | 114 ns | 260 ns | – | 133 B |
+| Caffeine store, 4 indexes | 47 ns | 2,379 ns | 2,396 ns | 0.67 µs | 445 B |
+| `Locking.SINGLE`, 4 indexes | 30 ns | 2,220 ns | 2,252 ns | 0.67 µs | 434 B |
 
 **Concurrent, 8 threads (million operations per second)**
 
 | | Reads only | Mixed: reads | Mixed: writes |
 |---|---:|---:|---:|
-| zdcache | 42 | 12 | 0.54 |
-| zdcache, 4 indexes | 42 | 22 | 0.14 |
-| zdcache, approximate recency | 63 | 27 | 2.7 |
-| zdcache, approximate, 4 indexes | 41 | 33 | 0.12 |
-| Caffeine | 90 | 55 | 7.5 |
-| cache2k | 179 | 98 | 7.5 |
-| Guava | 15 | 17 | 0.01 |
-| CQEngine, 4 indexes | 15 | 12 | 0.10 |
+| zdcache | 55 | 15 | 0.84 |
+| zdcache, 4 indexes | 31 | 31 | 0.15 |
+| zdcache, approximate recency | 33 | 24 | 2.4 |
+| zdcache, approximate, 4 indexes | 24 | 87 | 0.14 |
+| Caffeine | 141 | 87 | 8.8 |
+| cache2k | 262 | 119 | 7.5 |
+| Guava | 13 | 16 | 0.02 |
+| Ehcache | 27 | 44 | 8.1 |
+| ConcurrentHashMap, no eviction | 837 | 487 | 23 |
+| Hazelcast, 3 indexes | 0.28 | 0.22 | 0.05 |
+| CQEngine, 4 indexes | 20 | 15 | 0.10 |
 
 **Locking across four types (million operations per second)**
 
 | | Writes to separate types | `atomically` blocks | Same calls without a block | Mixed: reads | Mixed: writes |
 |---|---:|---:|---:|---:|---:|
-| zdcache, `Locking.PER_TYPE` | 2.4 | 0.25 | 0.43 | 14 | 0.79 |
-| zdcache, `Locking.SINGLE` | 0.41 | 0.24 | 0.22 | 17 | 0.23 |
+| zdcache, `Locking.PER_TYPE` | 2.6 | 0.26 | 0.48 | 15 | 0.89 |
+| zdcache, `Locking.SINGLE` | 0.46 | 0.26 | 0.22 | 17 | 0.25 |
 
 **Search**
 
 | | Prefix | Exact | Compound | Range |
 |---|---:|---:|---:|---:|
-| zdcache, 4 indexes | 1.3 µs | 13 µs | 2.3 µs | 156 µs |
-| CQEngine, 4 indexes | 20 µs | 20 µs | 35 µs | 223 µs |
-| Caffeine (full scan) | 920 µs | 1,138 µs | 1,146 µs | 1,332 µs |
-| cache2k (full scan) | 2,371 µs | 2,843 µs | 2,578 µs | 2,774 µs |
-| Guava (full scan) | 2,509 µs | 3,054 µs | 2,908 µs | 2,370 µs |
+| zdcache, 4 indexes | 0.67 µs | 5.7 µs | 1.2 µs | 46 µs |
+| zdcache, approximate, 4 indexes | 0.67 µs | 5.7 µs | 1.2 µs | 48 µs |
+| Hazelcast, 3 indexes | 32 µs | 317 µs | 818 µs | 2,700 µs |
+| CQEngine, 4 indexes | 10 µs | 6.5 µs | 17 µs | 79 µs |
+| Caffeine (full scan) | 454 µs | 565 µs | 568 µs | 622 µs |
+| cache2k (full scan) | 1,054 µs | 1,200 µs | 1,183 µs | 1,295 µs |
+| Guava (full scan) | 750 µs | 936 µs | 941 µs | 911 µs |
+| Ehcache (full scan) | 1,104 µs | 1,198 µs | 1,167 µs | 1,216 µs |
+| ConcurrentHashMap (full scan) | 389 µs | 498 µs | 500 µs | 538 µs |
 
 <!-- benchmark-summary:end -->
 
-How to read it: on one thread, zdcache's key lookup is in the same range as Caffeine's (25–27 ns for `get` against 29 ns, 101–133 ns for `put` against 121 ns), with cache2k the fastest, and keeping four indexes up to date costs about 2.5 µs per `put`. Searches through indexes are about 15× faster than CQEngine for prefix and compound queries, 1.4–1.5× for exact and range queries, and 8–2,000× faster than scanning a cache. Under concurrent load the default strict LRU store reads at about 45% of Caffeine's rate and writes at under a tenth of it. With `recency(Recency.APPROXIMATE)` zdcache reads at 65–90% of Caffeine's rate between runs and writes at about 40% of it, giving up exact LRU order under heavy contention. Across four types, `Locking.PER_TYPE` writes to separate types about six times faster than `Locking.SINGLE`; `atomically` blocks run at the same rate under both, and with `PER_TYPE` they cost about 40% of the throughput of the same calls made separately. Choose zdcache when you look cached objects up by more than their key; for key-only caching with many concurrent writes, Caffeine or cache2k fits better.
+How to read it: on one thread, zdcache's `get` is in the same range as Caffeine's at every size (17–25 ns against 20–27 ns), with cache2k and a plain `ConcurrentHashMap` faster. zdcache's `put` is 1.7× faster than Caffeine's at 1,000 entries and level with it at 50,000; choose *Across sizes* in the report to see how each method grows with the number of entries. Keeping four indexes up to date costs 1–2 µs per `put`. Searches through indexes are 1.1–15× faster than CQEngine, closest for exact and range queries, 48–680× faster than Hazelcast's indexes at 50,000 entries, and 8–1,000× faster than scanning a cache. Embedded Hazelcast copies every value it returns and takes about 8 µs per `get`; it is built for distributed data, not as a local cache. Under concurrent load the default strict LRU store reads at about 40% of Caffeine's rate and writes at about a tenth of it. With `recency(Recency.APPROXIMATE)` zdcache reads and writes faster than strict mode under mixed load, but not under read-only load at 50,000 entries. Across four types, `Locking.PER_TYPE` writes to separate types about six times faster than `Locking.SINGLE`; `atomically` blocks run at the same rate under both, and with `PER_TYPE` they reach about half the throughput of the same calls made separately. Choose zdcache when you look cached objects up by more than their key; for key-only caching with many concurrent writes, Caffeine or cache2k fits better.
 
-None of the benchmarks put the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts in LRU order per segment and zdcache in strict LRU order by default. CQEngine never evicts.
+None of the benchmarks put the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts in LRU order per segment, Ehcache by sampling and zdcache in strict LRU order by default. ConcurrentHashMap, Hazelcast as configured here and CQEngine never evict.
 
 ### What is measured
 
 | Benchmark | Measures | Threads | Entries | Workload |
 |---|---|---:|---|---|
-| `KeyLookupBenchmark.get` | Average time per `get` | 1 | 10,000 and 100,000 | Random keys from a fixed sequence of 65,536; every key is present |
-| `KeyLookupBenchmark.put` | Average time per `put` | 1 | 10,000 and 100,000 | Replaces existing entries, alternating between two versions of each person |
-| `SearchBenchmark.prefixName` | Average time per search | 1 | 10,000 and 100,000 | The first two letters of a random person's name |
-| `SearchBenchmark.exactCity` | Average time per search | 1 | 10,000 and 100,000 | One of 50 cities, about 2% of the entries |
-| `SearchBenchmark.rangeAge` | Average time per search | 1 | 10,000 and 100,000 | A 10-year age window, about 16% of the entries |
-| `SearchBenchmark.compoundCityAge` | Average time per search | 1 | 10,000 and 100,000 | A city and a 10-year age window |
-| `ConcurrentBenchmark.readOnly` | Operations per second | 8 | 100,000 | Every thread reads random keys |
-| `ConcurrentBenchmark.mixed` | Operations per second, reads and writes separately | 6 + 2 | 100,000 | Six threads read while two replace existing entries |
-| `LockingBenchmark.writesToSeparateTypes` | Operations per second | 4 | 100,000 per type | Four types; each thread replaces entries of its own type |
-| `LockingBenchmark.atomicBlocksAcrossTypes` | `atomically` blocks per second | 4 | 100,000 per type | Each block reads one type and replaces an entry in it and in the next type |
-| `LockingBenchmark.separateCallsAcrossTypes` | Calls per second, counted per group of three | 4 | 100,000 per type | The same read and two writes, without a block |
-| `LockingBenchmark.mixed` | Operations per second, reads and writes separately | 6 + 2 | 100,000 per type | Six threads read random types while two replace entries of their own type |
-| `MemoryFootprint` | Heap bytes per entry, measured with JOL | – | 10,000 and 100,000 | The cache filled with every person, not counting the person objects themselves |
+| `ConfigurationBenchmark.get`, `LibraryBenchmark.get` | Average time per `get` | 1 | 1,000 to 50,000 | Random keys from a fixed sequence of 65,536; every key is present |
+| `ConfigurationBenchmark.put`, `LibraryBenchmark.put` | Average time per `put` | 1 | 1,000 to 50,000 | Replaces existing entries, alternating between two versions of each person |
+| `ConfigurationBenchmark.putKeepingIndexedValues` | Average time per `put` | 1 | 1,000 to 50,000 | Replaces existing entries with a version that changes only the tags, which are not indexed |
+| `ConfigurationBenchmark.putAtomically` | Average time per `put` inside `atomically` | 1 | 1,000 to 50,000 | As `put`, each inside its own block |
+| `ConfigurationSearchBenchmark.prefixName`, `LibrarySearchBenchmark.prefixName` | Average time per search | 1 | 1,000 to 50,000 | The first two letters of a random person's name |
+| `ConfigurationSearchBenchmark.exactCity`, `LibrarySearchBenchmark.exactCity` | Average time per search | 1 | 1,000 to 50,000 | One of 50 cities, about 2% of the entries |
+| `ConfigurationSearchBenchmark.rangeAge`, `LibrarySearchBenchmark.rangeAge` | Average time per search | 1 | 1,000 to 50,000 | A 10-year age window, about 16% of the entries |
+| `ConfigurationSearchBenchmark.compoundCityAge`, `LibrarySearchBenchmark.compoundCityAge` | Average time per search | 1 | 1,000 to 50,000 | A city and a 10-year age window |
+| `ConcurrentBenchmark.readOnly` | Operations per second | 8 | 10,000 and 50,000 | Every thread reads random keys |
+| `ConcurrentBenchmark.mixed` | Operations per second, reads and writes separately | 6 + 2 | 10,000 and 50,000 | Six threads read while two replace existing entries |
+| `LockingBenchmark.writesToSeparateTypes` | Operations per second | 4 | 10,000 and 50,000 per type | Four types; each thread replaces entries of its own type |
+| `LockingBenchmark.atomicBlocksAcrossTypes` | `atomically` blocks per second | 4 | 10,000 and 50,000 per type | Each block reads one type and replaces an entry in it and in the next type |
+| `LockingBenchmark.separateCallsAcrossTypes` | Calls per second, counted per group of three | 4 | 10,000 and 50,000 per type | The same read and two writes, without a block |
+| `LockingBenchmark.mixed` | Operations per second, reads and writes separately | 6 + 2 | 10,000 and 50,000 per type | Six threads read random types while two replace entries of their own type |
+| `MemoryFootprint` | Heap bytes per entry, measured with JOL | – | 1,000 to 50,000 | The cache filled with every person, not counting the person objects themselves |
 
 Every entry is a `Person(id, name, city, age, tags)` with a six-letter random name, one of 50 cities, an age
 from 18 to 80 and up to three tags, generated from a fixed seed. `LockingBenchmark` instead uses four record
@@ -326,43 +396,48 @@ nothing is evicted.
 
 | Subject in the report | Library | Identity store | Recency | Indexes | Benchmarks |
 |---|---|---|---|---|---|
-| zdcache | zdcache | Buffered LRU (default) | Strict | None | Key lookup, concurrent, memory |
-| zdcache, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | All |
-| zdcache, approximate recency | zdcache | Buffered LRU | Approximate | None | Key lookup, concurrent |
-| zdcache, approximate, 4 indexes | zdcache | Buffered LRU | Approximate | 4 | Key lookup, concurrent |
-| LinkedHashMap | zdcache | LinkedHashMap | Strict | None | Key lookup, concurrent, memory |
-| LinkedHashMap, 4 indexes | zdcache | LinkedHashMap | Strict | 4 | All |
-| LinkedHashMap, 4 indexes, lambdas | zdcache | LinkedHashMap | Strict | 4, declared with lambdas | Key lookup |
-| Caffeine store | zdcache | Caffeine | Frequency-aware | None | Key lookup, concurrent, memory |
-| Caffeine store, 4 indexes | zdcache | Caffeine | Frequency-aware | 4 | All |
-| Caffeine | Caffeine 3.2.4 | – | Frequency-aware | None; searches scan | All |
-| cache2k | cache2k 2.6.1 | – | Clock-Pro | None; searches scan | All |
-| Guava | Guava 33.7.2 | – | LRU per segment | None; searches scan | All |
-| CQEngine, 4 indexes | CQEngine 3.6.0 | – | Never evicts | 4 | All |
+| zdcache, Buffered LRU (default) | zdcache | Buffered LRU (default) | Strict | None | Configuration, library, concurrent, memory |
+| zdcache, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | All except locking |
+| zdcache, approximate recency | zdcache | Buffered LRU | Approximate | None | Configuration, library, concurrent, memory |
+| zdcache, approximate, 4 indexes | zdcache | Buffered LRU | Approximate | 4 | All except locking |
+| LinkedHashMap store | zdcache | LinkedHashMap | Strict | None | Configuration, concurrent, memory |
+| LinkedHashMap store, 4 indexes | zdcache | LinkedHashMap | Strict | 4 | Configuration, memory |
+| Caffeine store | zdcache | Caffeine | Frequency-aware | None | Configuration, concurrent, memory |
+| Caffeine store, 4 indexes | zdcache | Caffeine | Frequency-aware | 4 | Configuration, memory |
+| `Locking.SINGLE`, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | Configuration, memory |
+| Caffeine | Caffeine 3.2.4 | – | Frequency-aware | None; searches scan | Library, concurrent, memory |
+| cache2k | cache2k 2.6.1 | – | Clock-Pro | None; searches scan | Library, concurrent, memory |
+| Guava | Guava 33.7.2 | – | LRU per segment | None; searches scan | Library, concurrent, memory |
+| Ehcache | Ehcache 3.12.0, heap tier | – | Sampled eviction | None; searches scan | Library, concurrent, memory |
+| ConcurrentHashMap | JDK | – | Never evicts | None; searches scan | Library, concurrent, memory |
+| Hazelcast, 3 indexes | Hazelcast 5.7.0, one embedded member | – | Never evicts | 3 | Library, concurrent |
+| CQEngine, 4 indexes | CQEngine 3.6.0 | – | Never evicts | 4 | Library, concurrent, memory |
 | zdcache, PER_TYPE locking | zdcache | Buffered LRU (default) | Strict | 2 per type | Locking |
 | zdcache, SINGLE locking | zdcache | Buffered LRU (default) | Strict | 2 per type | Locking |
 
-The four zdcache indexes are name (prefix), city (exact), age (range) and city with age (compound). The
-other zdcache subjects declare them by property name. CQEngine uses radix-tree, hash and navigable
-indexes, answers the compound query with two of them, and has its writes serialized. Guava gets 5% extra
-capacity so its per-segment limits do not evict early. Caffeine runs its maintenance on its default
-executor; the Caffeine store inside zdcache runs it on the calling thread.
+The four zdcache indexes are name (prefix), city (exact), age (range) and city with age (compound), declared
+by property name. CQEngine uses radix-tree, hash and navigable indexes, answers the compound query with two of
+them, and has its writes serialized. Hazelcast stores values as objects, indexes name and age as sorted and
+city as hashed, answers the compound query with two of them, and copies every value it returns; it runs
+without eviction because its per-partition limits would evict early, and its memory is not measured. Guava gets 5% extra
+capacity so its per-segment limits do not evict early. Caffeine runs its maintenance on its default executor; the Caffeine store inside zdcache runs it
+on the calling thread.
 
 Only `LockingBenchmark` uses several types, so it is the only one where `Locking.PER_TYPE` and
-`Locking.SINGLE` behave differently, and the only one that measures `atomically`. Every other zdcache subject
-uses the default `Locking.PER_TYPE`.
+`Locking.SINGLE` differ under contention. `ConfigurationBenchmark` measures the single-threaded cost of
+`Locking.SINGLE` and of `atomically`. Every other zdcache subject uses the default `Locking.PER_TYPE`.
 
 | Plan | Forks | Warm-up | Measurement | Time |
 |---|---|---|---|---|
-| `benchmark-full.properties` | 3 per benchmark | 1 × 1 s for key lookup, 1 × 500 ms for concurrent and locking, 1 × 600 ms for search | 2 × 300 ms, 2 × 500 ms for concurrent and locking | About 13 minutes |
-| `benchmark-quick.properties` | 1, 2 for concurrent and locking | As the full plan | As the full plan | About 6 minutes |
+| `benchmark-full.properties` | 3 per benchmark | 1 × 1 s for key lookup, 1 × 500 ms for concurrent and locking, 1 × 600 ms for search | 2 × 300 ms, 2 × 500 ms for concurrent and locking | About 55 minutes |
+| `benchmark-quick.properties` | 1, 2 for concurrent and locking | As the full plan | As the full plan | About 20 minutes |
 
 ### Running the benchmark
 
 ```bash
-./benchmark -full                  # settings in src/jmh/resources/benchmark-full.properties (about 13 minutes)
-./benchmark -quick                 # settings in src/jmh/resources/benchmark-quick.properties (about 6 minutes)
-./benchmark -jmh "SearchBenchmark -f 1 -p subject=zdcache-buffered-indexed,cqengine"   # custom JMH options
+./benchmark -full                  # settings in src/jmh/resources/benchmark-full.properties (about 55 minutes)
+./benchmark -quick                 # settings in src/jmh/resources/benchmark-quick.properties (about 20 minutes)
+./benchmark -jmh "LibrarySearchBenchmark -f 1 -p subject=zdcache-buffered-indexed,cqengine"   # custom JMH options
 ./benchmark -publish               # publish the last full run
 ```
 

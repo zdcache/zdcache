@@ -66,6 +66,7 @@
   .subtitle { color: var(--text-secondary); font-size: 14px; margin: 0 0 16px; max-width: 960px; }
   .filters { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; margin: 0 0 8px; font-size: 13px; color: var(--text-secondary); }
   .filter { display: flex; align-items: center; gap: 10px; }
+  .filter[hidden] { display: none; }
   .segmented { display: inline-flex; background: var(--control); border-radius: 8px; padding: 2px; gap: 2px; }
   .segmented button {
     font: inherit; font-size: 13px; color: var(--text-secondary); background: transparent;
@@ -79,6 +80,13 @@
   section.part > h2 { font-size: 18px; font-weight: 600; margin: 24px 0 2px; }
   section.part > p { font-size: 13px; color: var(--text-secondary); margin: 0 0 12px; max-width: 960px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+  .grid.wide { grid-template-columns: repeat(auto-fit, minmax(600px, 1fr)); }
+  .series-label { fill: var(--text-secondary); font-size: 11px; }
+  .series-label.highlight { fill: var(--text-primary); font-weight: 600; }
+  .tooltip .entry { display: flex; justify-content: space-between; gap: 16px; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+  .tooltip .entry.highlight { color: var(--text-primary); font-weight: 600; }
+  .tooltip .entry.hovered { color: var(--text-primary); text-decoration: underline; }
+  caption { text-align: left; font-size: 12px; font-weight: 600; color: var(--text-secondary); padding-top: 8px; }
   .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 16px 8px; min-width: 0; }
   .card h3 { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
   .card .direction { font-size: 12px; color: var(--text-muted); margin: 0 0 6px; }
@@ -115,7 +123,8 @@
   <p class="subtitle" id="subtitle"></p>
   <div class="filters">
     <div class="filter"><span>Compare</span><div class="segmented" id="views" role="group" aria-label="Compare"></div></div>
-    <div class="filter"><span>Entries</span><div class="segmented" id="sizes" role="group" aria-label="Entries"></div></div>
+    <div class="filter"><span>Show</span><div class="segmented" id="layouts" role="group" aria-label="Show"></div></div>
+    <div class="filter" id="size-filter"><span>Entries</span><div class="segmented" id="sizes" role="group" aria-label="Entries"></div></div>
   </div>
   <ul class="key" id="key"></ul>
   <div id="page"></div>
@@ -127,8 +136,9 @@ const DATA = /*BENCHMARK_DATA*/null;
 
 const VIEWS = [
   { key: "libraries", name: "Libraries", highlightName: "zdcache", otherName: "Other libraries",
-    subtitle: "zdcache with its default buffered LRU store, compared with Caffeine, cache2k, Guava and CQEngine. "
-      + "Every chart uses a log scale, because the libraries differ by up to three orders of magnitude.",
+    subtitle: "zdcache's two recommended configurations, the default and approximate recency, compared with Caffeine, cache2k, "
+      + "Guava, Ehcache, a plain ConcurrentHashMap, Hazelcast and CQEngine. Every chart uses a log scale, because the "
+      + "libraries differ by up to three orders of magnitude.",
     rows: [
       { subject: "zdcache-buffered-keys", label: "zdcache", highlight: true },
       { subject: "zdcache-buffered-indexed", label: "zdcache, 4 indexes", highlight: true },
@@ -137,55 +147,62 @@ const VIEWS = [
       { subject: "caffeine", label: "Caffeine", scan: true },
       { subject: "cache2k", label: "cache2k", scan: true },
       { subject: "guava", label: "Guava", scan: true },
+      { subject: "ehcache", label: "Ehcache", scan: true },
+      { subject: "concurrent-hash-map", label: "ConcurrentHashMap, no eviction", scan: true },
+      { subject: "hazelcast", label: "Hazelcast, 3 indexes" },
       { subject: "cqengine", label: "CQEngine, 4 indexes" },
       { subject: "zdcache-locking-per-type", label: "zdcache, PER_TYPE locking", highlight: true },
       { subject: "zdcache-locking-single", label: "zdcache, SINGLE locking", highlight: true },
     ] },
-  { key: "stores", name: "zdcache stores", highlightName: "Default store", otherName: "Other stores",
-    subtitle: "zdcache with each of its identity stores: the default buffered LRU store, the LinkedHashMap store and "
-      + "the Caffeine store, with and without indexes. Every chart uses a log scale.",
+  { key: "stores", name: "zdcache configurations", highlightName: "Default configuration", otherName: "Other configurations",
+    subtitle: "zdcache only, in each configuration: the default buffered LRU store, approximate recency, the LinkedHashMap "
+      + "store and the Caffeine store, with and without indexes, and single locking. Every chart uses a log scale.",
     rows: [
       { subject: "zdcache-buffered-keys", label: "Buffered LRU (default)", highlight: true },
       { subject: "zdcache-buffered-indexed", label: "Buffered LRU, 4 indexes", highlight: true },
-      { subject: "zdcache-approximate-keys", label: "Buffered, approximate recency" },
-      { subject: "zdcache-approximate-indexed", label: "Buffered, approximate, 4 indexes" },
-      { subject: "zdcache-lhm-keys", label: "LinkedHashMap" },
-      { subject: "zdcache-lhm-indexed", label: "LinkedHashMap, 4 indexes" },
-      { subject: "zdcache-lhm-indexed-lambda", label: "LinkedHashMap, 4 indexes, lambdas" },
+      { subject: "zdcache-approximate-keys", label: "Approximate recency" },
+      { subject: "zdcache-approximate-indexed", label: "Approximate recency, 4 indexes" },
+      { subject: "zdcache-lhm-keys", label: "LinkedHashMap store" },
+      { subject: "zdcache-lhm-indexed", label: "LinkedHashMap store, 4 indexes" },
       { subject: "zdcache-caffeine-keys", label: "Caffeine store" },
       { subject: "zdcache-caffeine-indexed", label: "Caffeine store, 4 indexes" },
+      { subject: "zdcache-single-indexed", label: "SINGLE locking, 4 indexes" },
       { subject: "zdcache-locking-per-type", label: "PER_TYPE locking (default)", highlight: true },
       { subject: "zdcache-locking-single", label: "SINGLE locking" },
     ] },
 ];
 
+const both = name => ({ libraries: "Library" + name, stores: "Configuration" + name });
+
 const PARTS = [
   { title: "Key lookup", sized: true,
     text: "One thread getting and putting entries by key. Every key is present, so there is no eviction pressure.",
     charts: [
-      { title: "get", benchmark: "KeyLookupBenchmark.get", lowerIsBetter: true },
-      { title: "put", benchmark: "KeyLookupBenchmark.put", lowerIsBetter: true },
+      { title: "get", benchmark: both("Benchmark.get"), lowerIsBetter: true },
+      { title: "put", benchmark: both("Benchmark.put"), lowerIsBetter: true },
+      { title: "put keeping indexed values", benchmark: { stores: "ConfigurationBenchmark.putKeepingIndexedValues" }, lowerIsBetter: true },
+      { title: "put inside atomically", benchmark: { stores: "ConfigurationBenchmark.putAtomically" }, lowerIsBetter: true },
     ] },
   { title: "Search", sized: true,
     text: "Finding every entry matching a query. Caches without indexes have to scan all entries. "
       + "Exact matches about 2% of the entries, range about 16%.",
     charts: [
-      { title: "Prefix on name", benchmark: "SearchBenchmark.prefixName", lowerIsBetter: true },
-      { title: "Exact city", benchmark: "SearchBenchmark.exactCity", lowerIsBetter: true },
-      { title: "Compound: exact city and age range", benchmark: "SearchBenchmark.compoundCityAge", lowerIsBetter: true },
-      { title: "Age range", benchmark: "SearchBenchmark.rangeAge", lowerIsBetter: true },
+      { title: "Prefix on name", benchmark: both("SearchBenchmark.prefixName"), lowerIsBetter: true },
+      { title: "Exact city", benchmark: both("SearchBenchmark.exactCity"), lowerIsBetter: true },
+      { title: "Compound: exact city and age range", benchmark: both("SearchBenchmark.compoundCityAge"), lowerIsBetter: true },
+      { title: "Age range", benchmark: both("SearchBenchmark.rangeAge"), lowerIsBetter: true },
     ] },
-  { title: "Concurrent", sized: false,
-    text: "Eight threads at 100,000 entries: all reading, or six reading while two write.",
+  { title: "Concurrent", sized: true,
+    text: "Eight threads: all reading, or six reading while two write.",
     charts: [
       { title: "Reads only", benchmark: "ConcurrentBenchmark.readOnly", lowerIsBetter: false },
       { title: "Mixed: reads", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedRead", lowerIsBetter: false },
       { title: "Mixed: writes", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedWrite", lowerIsBetter: false },
     ] },
-  { title: "Locking across types", sized: false,
-    text: "Four types of 100,000 entries each, with indexes on name and city, in the default buffered store. Four threads "
-      + "write to their own type, or run blocks that read one type and write two; in mixed load six threads read random "
-      + "types while two write. Only the locking strategy differs.",
+  { title: "Locking across types", sized: true,
+    text: "Four types of entries, with indexes on name and city, in the default buffered store. Four threads write to "
+      + "their own type, or run blocks that read one type and write two; in mixed load six threads read random types "
+      + "while two write. Only the locking strategy differs.",
     charts: [
       { title: "Writes to separate types", benchmark: "LockingBenchmark.writesToSeparateTypes", lowerIsBetter: false },
       { title: "atomically blocks across types", benchmark: "LockingBenchmark.atomicBlocksAcrossTypes", lowerIsBetter: false },
@@ -200,12 +217,23 @@ const PARTS = [
     ] },
 ];
 
+function benchmarkOf(chart) {
+  return typeof chart.benchmark === "string" ? chart.benchmark : chart.benchmark?.[activeView.key];
+}
+
+function chartsOf(part) {
+  return part.charts.filter(chart => chart.footprint || benchmarkOf(chart));
+}
+
 const SIZES = [...new Set(DATA.results.map(r => r.size).concat(DATA.footprint.map(f => f.size)))]
   .filter(size => size > 0).sort((a, b) => a - b).map(size => ({ size, label: size.toLocaleString("en-US") }));
 const LARGEST = SIZES.length ? SIZES[SIZES.length - 1].size : 0;
 
 let activeView = VIEWS[0];
 let activeSize = SIZES[SIZES.length - 1];
+const LAYOUTS = [{ key: "size", name: "At one size" }, { key: "scaling", name: "Across sizes" }];
+let activeLayout = LAYOUTS[0];
+const scaling = () => activeLayout.key === "scaling";
 const openTables = new Set();
 
 const UNITS = { "ns/op": "ns", "us/op": "µs", "ms/op": "ms", "ops/us": "M ops/s", "bytes": "B" };
@@ -215,7 +243,7 @@ function estimate(chart, subject, size) {
     const entry = DATA.footprint.find(f => f.subject === subject && f.size === size);
     return entry ? { score: entry.bytesPerEntry, low: null, high: null, unit: "bytes" } : null;
   }
-  const result = DATA.results.find(r => r.benchmark === chart.benchmark && r.subject === subject && r.size === size);
+  const result = DATA.results.find(r => r.benchmark === benchmarkOf(chart) && r.subject === subject && r.size === size);
   if (!result) return null;
   const metric = chart.metric ? result.secondary[chart.metric] : result.primary;
   return metric ? { score: metric.score, low: metric.low, high: metric.high, unit: result.unit } : null;
@@ -225,11 +253,27 @@ function sizeFor(part) {
   return part.sized ? activeSize.size : LARGEST;
 }
 
+function labelOf(part, row) {
+  return part.title === "Search" && row.scan ? row.label + " (full scan)" : row.label;
+}
+
 function rowsFor(chart, part, size) {
   return activeView.rows
     .map(row => ({ row, value: estimate(chart, row.subject, size) }))
     .filter(entry => entry.value && entry.value.score > 0)
-    .map(entry => ({ ...entry, label: part.title === "Search" && entry.row.scan ? entry.row.label + " (full scan)" : entry.row.label }));
+    .map(entry => ({ ...entry, label: labelOf(part, entry.row) }));
+}
+
+function measuredSizes(chart, part) {
+  return SIZES.map(s => s.size).filter(size => rowsFor(chart, part, size).length);
+}
+
+function seriesFor(chart, part) {
+  const sizes = measuredSizes(chart, part);
+  return activeView.rows
+    .map(row => ({ row, label: labelOf(part, row),
+      points: sizes.map(size => ({ size, value: estimate(chart, row.subject, size) })).filter(p => p.value && p.value.score > 0) }))
+    .filter(series => series.points.length);
 }
 
 function format(value, unit) {
@@ -315,13 +359,190 @@ function showTooltip(anchor, chart, entry, size) {
 }
 const hideTooltip = () => { tooltip.style.display = "none"; };
 
+function showSizeTooltip(anchor, chart, size, entries, hovered) {
+  tooltip.replaceChildren();
+  const heading = document.createElement("div");
+  heading.className = "heading";
+  heading.textContent = `${chart.title} · ${size.toLocaleString("en-US")} entries · ${chart.lowerIsBetter ? "lower" : "higher"} is better`;
+  tooltip.appendChild(heading);
+  const sorted = [...entries].sort((a, b) => chart.lowerIsBetter ? a.value.score - b.value.score : b.value.score - a.value.score);
+  for (const entry of sorted) {
+    const line = document.createElement("div");
+    line.className = "entry" + (entry.series.row.highlight ? " highlight" : "") + (entry.series === hovered ? " hovered" : "");
+    const name = document.createElement("span");
+    name.textContent = entry.series.label;
+    const value = document.createElement("span");
+    value.textContent = format(entry.value.score, entry.value.unit);
+    line.append(name, value);
+    tooltip.appendChild(line);
+  }
+  tooltip.style.display = "block";
+  const box = tooltip.getBoundingClientRect();
+  const left = anchor.x + 16 + box.width > window.innerWidth ? anchor.x - box.width - 16 : anchor.x + 16;
+  tooltip.style.left = Math.max(8, left) + "px";
+  tooltip.style.top = Math.max(8, Math.min(window.innerHeight - box.height - 8, anchor.y - box.height / 2)) + "px";
+}
+
+function spreadLabels(items, gap, top, bottom) {
+  const sorted = [...items].sort((a, b) => a.y - b.y);
+  for (let i = 0; i < sorted.length; i++) {
+    sorted[i].labelY = Math.max(sorted[i].y, i ? sorted[i - 1].labelY + gap : top);
+  }
+  const overflow = sorted.length ? sorted[sorted.length - 1].labelY - bottom : 0;
+  if (overflow > 0) {
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      sorted[i].labelY = Math.min(sorted[i].labelY - overflow, i < sorted.length - 1 ? sorted[i + 1].labelY - gap : bottom);
+    }
+  }
+}
+
+function drawLines(card, chart, part) {
+  const series = seriesFor(chart, part);
+  if (!series.length) {
+    const empty = document.createElement("p");
+    empty.className = "direction";
+    empty.textContent = "Not measured in this run.";
+    card.appendChild(empty);
+    return;
+  }
+  const sizes = measuredSizes(chart, part);
+  const unit = series[0].points[0].value.unit;
+  const scores = series.flatMap(s => s.points.map(p => p.value.score));
+  const yLow = Math.log10(niceBelow(Math.min(...scores) * 0.9));
+  const yHighRaw = Math.log10(niceAbove(Math.max(...scores) * 1.1));
+  const domain = { low: yLow, high: yHighRaw - yLow < 0.3 ? yLow + 1 : yHighRaw };
+  const labelWidth = Math.ceil(Math.max(...series.map(s => s.label.length)) * 6.4) + 24;
+  const margin = { top: 24, right: labelWidth, bottom: 40, left: 52 };
+  const width = Math.max(480, card.clientWidth - 32);
+  const height = Math.max(300, series.length * 15 + margin.top + margin.bottom);
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const xLow = Math.log10(sizes[0]), xHigh = Math.log10(sizes[sizes.length - 1]);
+  const x = size => xHigh === xLow ? margin.left + plotWidth / 2
+    : margin.left + (Math.log10(size) - xLow) / (xHigh - xLow) * plotWidth;
+  const y = v => margin.top + (domain.high - Math.log10(v)) / (domain.high - domain.low) * plotHeight;
+
+  const svg = el("svg", { width, height, viewBox: `0 0 ${width} ${height}`, tabindex: 0, role: "img",
+    "aria-label": `${chart.title} across ${sizes.length} sizes, ${chart.lowerIsBetter ? "lower" : "higher"} is better. `
+      + "Use the left and right arrow keys to read each size." }, card);
+  for (const tick of ticksFor(domain)) {
+    el("line", { x1: margin.left, x2: margin.left + plotWidth, y1: y(tick), y2: y(tick), stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    el("text", { x: margin.left - 8, y: y(tick) + 4, "text-anchor": "end", class: "tick" }, svg).textContent = tickLabel(tick);
+  }
+  for (const size of sizes) {
+    el("text", { x: x(size), y: height - margin.bottom + 16, "text-anchor": "middle", class: "tick" }, svg).textContent = tickLabel(size);
+  }
+  el("line", { x1: margin.left, x2: margin.left + plotWidth, y1: margin.top + plotHeight, y2: margin.top + plotHeight,
+    stroke: "var(--baseline)", "stroke-width": 1 }, svg);
+  el("text", { x: margin.left, y: 12, class: "axis-title" }, svg).textContent = `${UNITS[unit] ?? unit} (log scale)`;
+  el("text", { x: margin.left + plotWidth / 2, y: height - 6, "text-anchor": "middle", class: "axis-title" }, svg)
+    .textContent = "Entries (log scale)";
+
+  const crosshair = el("line", { y1: margin.top, y2: margin.top + plotHeight, stroke: "var(--baseline)", "stroke-width": 1, visibility: "hidden" }, svg);
+  const ordered = [...series].sort((a, b) => Number(!!a.row.highlight) - Number(!!b.row.highlight));
+  const drawn = new Map();
+  for (const s of ordered) {
+    const color = s.row.highlight ? "var(--series-1)" : "var(--other)";
+    const group = el("g", {}, svg);
+    el("polyline", { points: s.points.map(p => `${x(p.size)},${y(p.value.score)}`).join(" "), fill: "none", stroke: color,
+      "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, group);
+    for (const p of s.points) {
+      el("circle", { cx: x(p.size), cy: y(p.value.score), r: 4, fill: color, stroke: "var(--surface-1)", "stroke-width": 2 }, group);
+    }
+    drawn.set(s, group);
+  }
+  const ends = series.map(s => {
+    const last = s.points[s.points.length - 1];
+    return { series: s, x: x(last.size), y: y(last.value.score) };
+  });
+  spreadLabels(ends, 14, margin.top, margin.top + plotHeight);
+  const labelX = margin.left + plotWidth + 14;
+  for (const end of ends) {
+    if (Math.abs(end.labelY - end.y) > 2 || end.x < margin.left + plotWidth - 1) {
+      el("line", { x1: end.x + 6, x2: labelX - 3, y1: end.y, y2: end.labelY, stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    }
+    el("text", { x: labelX, y: end.labelY + 4, class: "series-label" + (end.series.row.highlight ? " highlight" : "") }, svg)
+      .textContent = end.series.label;
+  }
+
+  let active = -1;
+  function select(index, hovered) {
+    active = index;
+    const size = sizes[index];
+    crosshair.setAttribute("x1", x(size));
+    crosshair.setAttribute("x2", x(size));
+    crosshair.setAttribute("visibility", "visible");
+    drawn.forEach((group, s) => group.setAttribute("opacity", hovered && s !== hovered ? 0.25 : 1));
+    const entries = series.map(s => ({ series: s, value: s.points.find(p => p.size === size)?.value })).filter(e => e.value);
+    const box = svg.getBoundingClientRect();
+    const anchorY = hovered ? y(entries.find(e => e.series === hovered)?.value.score ?? 0) : margin.top + plotHeight / 2;
+    showSizeTooltip({ x: box.left + x(size), y: box.top + anchorY }, chart, size, entries, hovered);
+  }
+  function clear() {
+    active = -1;
+    crosshair.setAttribute("visibility", "hidden");
+    drawn.forEach(group => group.setAttribute("opacity", 1));
+    hideTooltip();
+  }
+  const hit = el("rect", { x: margin.left - 20, y: margin.top, width: plotWidth + 40, height: plotHeight, fill: "transparent" }, svg);
+  hit.addEventListener("pointermove", event => {
+    const box = svg.getBoundingClientRect();
+    const px = event.clientX - box.left, py = event.clientY - box.top;
+    let index = 0;
+    sizes.forEach((size, i) => { if (Math.abs(x(size) - px) < Math.abs(x(sizes[index]) - px)) index = i; });
+    let hovered = null, distance = 12;
+    for (const s of series) {
+      const point = s.points.find(p => p.size === sizes[index]);
+      if (point && Math.abs(y(point.value.score) - py) < distance) { distance = Math.abs(y(point.value.score) - py); hovered = s; }
+    }
+    select(index, hovered);
+  });
+  hit.addEventListener("pointerleave", clear);
+  svg.addEventListener("keydown", event => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const step = event.key === "ArrowRight" ? 1 : -1;
+    const start = active < 0 ? (step > 0 ? -1 : sizes.length) : active;
+    select(Math.min(sizes.length - 1, Math.max(0, start + step)), null);
+  });
+  svg.addEventListener("blur", clear);
+}
+
+function scalingTables(part) {
+  const fragment = document.createDocumentFragment();
+  for (const chart of chartsOf(part)) {
+    const sizes = measuredSizes(chart, part);
+    const series = seriesFor(chart, part);
+    if (!series.length) continue;
+    const node = document.createElement("table");
+    node.createCaption().textContent = chart.title;
+    const head = node.createTHead().insertRow();
+    for (const heading of ["", ...sizes.map(size => size.toLocaleString("en-US"))]) {
+      const cell = document.createElement("th");
+      cell.textContent = heading;
+      head.appendChild(cell);
+    }
+    const body = node.createTBody();
+    for (const s of series) {
+      const tr = body.insertRow();
+      tr.insertCell().textContent = s.label;
+      for (const size of sizes) {
+        const value = s.points.find(p => p.size === size)?.value;
+        tr.insertCell().textContent = value ? format(value.score, value.unit) : "–";
+      }
+    }
+    fragment.appendChild(node);
+  }
+  return fragment;
+}
+
 function drawChart(card, chart, part) {
   const size = sizeFor(part);
   const entries = rowsFor(chart, part, size);
   if (!entries.length) {
     const empty = document.createElement("p");
     empty.className = "direction";
-    empty.textContent = "Not measured in this run.";
+    empty.textContent = "Not measured at this size.";
     card.appendChild(empty);
     return;
   }
@@ -397,17 +618,17 @@ function partTable(part) {
   const size = sizeFor(part);
   const node = document.createElement("table");
   const head = node.createTHead().insertRow();
-  for (const heading of ["", ...part.charts.map(chart => chart.title)]) {
+  for (const heading of ["", ...chartsOf(part).map(chart => chart.title)]) {
     const cell = document.createElement("th");
     cell.textContent = heading;
     head.appendChild(cell);
   }
   const body = node.createTBody();
   for (const row of activeView.rows) {
-    const values = part.charts.map(chart => estimate(chart, row.subject, size));
+    const values = chartsOf(part).map(chart => estimate(chart, row.subject, size));
     if (values.every(value => !value)) continue;
     const tr = body.insertRow();
-    tr.insertCell().textContent = part.title === "Search" && row.scan ? row.label + " (full scan)" : row.label;
+    tr.insertCell().textContent = labelOf(part, row);
     for (const value of values) {
       tr.insertCell().textContent = !value ? "–"
         : format(value.score, value.unit) + (value.low != null
@@ -423,6 +644,7 @@ function renderPage() {
     if (details.open) openTables.add(details.dataset.part); else openTables.delete(details.dataset.part);
   });
   container.replaceChildren();
+  document.getElementById("size-filter").hidden = scaling();
   document.getElementById("subtitle").textContent = activeView.subtitle;
   const key = document.getElementById("key");
   key.replaceChildren();
@@ -442,13 +664,13 @@ function renderPage() {
     const section = document.createElement("section");
     section.className = "part";
     const heading = document.createElement("h2");
-    heading.textContent = part.sized ? `${part.title}, ${activeSize.label} entries` : part.title;
+    heading.textContent = scaling() ? part.title : `${part.title}, ${activeSize.label} entries`;
     const text = document.createElement("p");
     text.textContent = part.text;
     const grid = document.createElement("div");
-    grid.className = "grid";
+    grid.className = scaling() ? "grid wide" : "grid";
     section.append(heading, text, grid);
-    for (const chart of part.charts) {
+    for (const chart of chartsOf(part)) {
       const card = document.createElement("section");
       card.className = "card";
       const title = document.createElement("h3");
@@ -458,14 +680,14 @@ function renderPage() {
       direction.textContent = chart.lowerIsBetter ? "Lower is better" : "Higher is better";
       card.append(title, direction);
       grid.appendChild(card);
-      draws.push(() => drawChart(card, chart, part));
+      draws.push(() => scaling() ? drawLines(card, chart, part) : drawChart(card, chart, part));
     }
     const details = document.createElement("details");
     details.dataset.part = part.title;
     details.open = openTables.has(part.title);
     const summary = document.createElement("summary");
     summary.textContent = "Table view";
-    details.append(summary, partTable(part));
+    details.append(summary, scaling() ? scalingTables(part) : partTable(part));
     section.appendChild(details);
     container.appendChild(section);
   }
@@ -493,6 +715,7 @@ function segmented(containerId, options, label, isActive, onSelect) {
 const fromHash = VIEWS.find(view => "#" + view.key === window.location.hash);
 if (fromHash) activeView = fromHash;
 segmented("views", VIEWS, view => view.name, view => view === activeView, view => { activeView = view; });
+segmented("layouts", LAYOUTS, layout => layout.name, layout => layout === activeLayout, layout => { activeLayout = layout; });
 segmented("sizes", SIZES, size => size.label, size => size === activeSize, size => { activeSize = size; });
 renderPage();
 let resizeTimer;
@@ -506,10 +729,12 @@ document.getElementById("note").textContent =
   + "per measurement. Times are JMH averages per operation and throughput is "
   + "operations per microsecond (million per second); each value is the median of the per-fork averages and whiskers span the slowest and fastest fork. "
   + "No benchmark puts the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts "
-  + "in LRU order per segment and zdcache in strict LRU order. Guava gets 5% extra capacity so its per-segment limits "
-  + "do not evict entries early. CQEngine never evicts, plans the compound query over separate hash and navigable "
-  + "indexes, and has its writes serialized with a lock. These numbers come from the author's development machine; "
-  + "results vary with hardware, JVM, load and data shape.";
+  + "in LRU order per segment, Ehcache's heap tier by sampling and zdcache in strict LRU order by default. Guava gets 5% "
+  + "extra capacity so its per-segment limits do not evict entries early. ConcurrentHashMap never evicts. Hazelcast runs "
+  + "as one embedded member with objects stored as objects, without eviction because its per-partition limits would "
+  + "evict early, and copies values on every read. CQEngine never evicts, plans the compound query over separate hash "
+  + "and navigable indexes, and has its writes serialized with a lock. These numbers come from the author's "
+  + "development machine; results vary with hardware, JVM, load and data shape.";
 </script>
 </body>
 </html>

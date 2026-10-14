@@ -2,7 +2,9 @@
 cache2k = "2.6.1.Final"
 caffeine = "3.2.4"
 cqengine = "3.6.0"
+ehcache = "3.12.0"
 guava = "33.7.2-jre"
+hazelcast = "5.7.0"
 jackson = "2.22.3"
 jmh = "1.37"
 jol = "0.17"
@@ -14,7 +16,9 @@ cache2k-api = { module = "org.cache2k:cache2k-api", version.ref = "cache2k" }
 cache2k-core = { module = "org.cache2k:cache2k-core", version.ref = "cache2k" }
 caffeine = { module = "com.github.ben-manes.caffeine:caffeine", version.ref = "caffeine" }
 cqengine = { module = "com.googlecode.cqengine:cqengine", version.ref = "cqengine" }
+ehcache = { module = "org.ehcache:ehcache", version.ref = "ehcache" }
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
+hazelcast = { module = "com.hazelcast:hazelcast", version.ref = "hazelcast" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 jmh-core = { module = "org.openjdk.jmh:jmh-core", version.ref = "jmh" }
 jmh-generator = { module = "org.openjdk.jmh:jmh-generator-annprocess", version.ref = "jmh" }

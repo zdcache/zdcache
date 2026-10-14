@@ -12,14 +12,13 @@ import org.openjdk.jmh.annotations.*;
 public class ConcurrentBenchmark {
     private static final int ORDER_MASK = (1 << 16) - 1;
 
-    @Param({"100000"})
+    @Param({"1000", "3000", "5000", "10000", "50000"})
     int size;
 
-    @Param({Subjects.CAFFEINE, Subjects.ZDCACHE_LHM_KEYS, Subjects.ZDCACHE_CAFFEINE_KEYS,
-            Subjects.ZDCACHE_LHM_INDEXED, Subjects.ZDCACHE_CAFFEINE_INDEXED,
-            Subjects.ZDCACHE_BUFFERED_KEYS, Subjects.ZDCACHE_BUFFERED_INDEXED,
-            Subjects.ZDCACHE_APPROXIMATE_KEYS, Subjects.ZDCACHE_APPROXIMATE_INDEXED,
-            Subjects.GUAVA, Subjects.CACHE2K, Subjects.CQENGINE})
+    @Param({Subjects.ZDCACHE_BUFFERED_KEYS, Subjects.ZDCACHE_BUFFERED_INDEXED, Subjects.ZDCACHE_APPROXIMATE_KEYS,
+            Subjects.ZDCACHE_APPROXIMATE_INDEXED, Subjects.ZDCACHE_LHM_KEYS, Subjects.ZDCACHE_CAFFEINE_KEYS,
+            Subjects.CAFFEINE, Subjects.CACHE2K, Subjects.GUAVA, Subjects.EHCACHE, Subjects.CONCURRENT_HASH_MAP,
+            Subjects.HAZELCAST, Subjects.CQENGINE})
     String subject;
 
     CacheSubject cache;
@@ -31,6 +30,11 @@ public class ConcurrentBenchmark {
         versions = new Person[][] {people, Dataset.changed(people, 43)};
         cache = Subjects.create(subject, size);
         for (Person person : people) cache.put(person);
+    }
+
+    @TearDown(Level.Trial)
+    public void tearDown() {
+        cache.close();
     }
 
     @State(Scope.Thread)

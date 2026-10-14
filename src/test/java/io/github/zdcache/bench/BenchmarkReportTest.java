@@ -8,7 +8,7 @@ class BenchmarkReportTest {
     private static final String JMH = """
         [
           {
-            "benchmark": "io.github.zdcache.bench.KeyLookupBenchmark.get",
+            "benchmark": "io.github.zdcache.bench.LibraryBenchmark.get",
             "jdkVersion": "21.0.6", "forks": 3,
             "params": {"size": "100000", "subject": "zdcache-buffered-keys"},
             "primaryMetric": {"score": 27.73, "scoreError": 1.8, "scoreUnit": "ns/op",
@@ -16,7 +16,7 @@ class BenchmarkReportTest {
             "secondaryMetrics": {}
           },
           {
-            "benchmark": "io.github.zdcache.bench.KeyLookupBenchmark.put",
+            "benchmark": "io.github.zdcache.bench.LibraryBenchmark.put",
             "jdkVersion": "21.0.6", "forks": 3,
             "params": {"size": "100000", "subject": "zdcache-buffered-keys"},
             "primaryMetric": {"score": 1488.6, "scoreError": "NaN", "scoreUnit": "ns/op"},
@@ -33,7 +33,7 @@ class BenchmarkReportTest {
             }
           },
           {
-            "benchmark": "io.github.zdcache.bench.SearchBenchmark.prefixName",
+            "benchmark": "io.github.zdcache.bench.LibrarySearchBenchmark.prefixName",
             "jdkVersion": "21.0.6", "forks": 3,
             "params": {"size": "100000", "subject": "cqengine"},
             "primaryMetric": {"score": 19.44, "scoreError": 0.42, "scoreUnit": "us/op"},
@@ -60,7 +60,7 @@ class BenchmarkReportTest {
         assertEquals(3, run.maxForks());
         assertEquals(4, run.results().size());
         var get = run.results().getFirst();
-        assertEquals("KeyLookupBenchmark.get", get.benchmark());
+        assertEquals("LibraryBenchmark.get", get.benchmark());
         assertEquals("zdcache-buffered-keys", get.subject());
         assertEquals(100_000, get.size());
         assertEquals("ns/op", get.unit());
@@ -83,7 +83,7 @@ class BenchmarkReportTest {
         assertTrue(summary.contains("| Caffeine | – | 56 | 0.55 |"));
         assertTrue(summary.contains("| CQEngine, 4 indexes | 19 µs | – | – | – |"));
         assertTrue(summary.contains("| CQEngine, 4 indexes | – | – | – |"));
-        assertEquals(4, summary.split("\\|---\\|").length - 1);
+        assertEquals(5, summary.split("\\|---\\|").length - 1);
     }
 
     @Test void numbersKeepTwoSignificantDigitsBelowTen() {
@@ -159,5 +159,22 @@ class BenchmarkReportTest {
         String summary = BenchmarkReport.summary(run);
         assertTrue(summary.contains("| zdcache, `Locking.SINGLE` | 1.5 | – | – | – | – |"));
         assertTrue(summary.contains("| zdcache, `Locking.PER_TYPE` | – | – | – | 28 | 2.0 |"));
+    }
+
+    @Test void zdcacheConfigurationsAreSummarisedSeparatelyFromTheLibraries() {
+        String json = """
+            [
+              {"benchmark": "io.github.zdcache.bench.ConfigurationBenchmark.putAtomically", "jdkVersion": "21", "forks": 3,
+               "params": {"size": "50000", "subject": "zdcache-single-indexed"},
+               "primaryMetric": {"score": 2100, "scoreUnit": "ns/op", "rawData": [[2100.0]]}, "secondaryMetrics": {}},
+              {"benchmark": "io.github.zdcache.bench.ConfigurationSearchBenchmark.prefixName", "jdkVersion": "21", "forks": 3,
+               "params": {"size": "50000", "subject": "zdcache-single-indexed"},
+               "primaryMetric": {"score": 1.2, "scoreUnit": "us/op", "rawData": [[1.2]]}, "secondaryMetrics": {}}
+            ]
+            """;
+        String summary = BenchmarkReport.summary(BenchmarkReport.read(json, List.of(), "full", "t", 4));
+
+        assertTrue(summary.contains("| `Locking.SINGLE`, 4 indexes | – | – | 2,100 ns | 1.2 µs | – |"));
+        assertTrue(summary.contains("| zdcache, approximate, 4 indexes | – | – | – | – |"));
     }
 }

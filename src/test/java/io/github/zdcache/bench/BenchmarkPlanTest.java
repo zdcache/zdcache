@@ -27,14 +27,14 @@ class BenchmarkPlanTest {
     @Test void aBenchmarkOverridesTheSharedSettingsAndNarrowsItsParameters() {
         var plan = BenchmarkPlan.parse(EVERY + """
             ConcurrentBenchmark.forks=3
-            SearchBenchmark.measurementTime=2s
-            SearchBenchmark.sizes=100000
-            SearchBenchmark.subjects=zdcache-buffered-indexed, cqengine
+            LibrarySearchBenchmark.measurementTime=2s
+            LibrarySearchBenchmark.sizes=100000
+            LibrarySearchBenchmark.subjects=zdcache-buffered-indexed, cqengine
             """);
 
         assertEquals(3, plan.settings("ConcurrentBenchmark").forks());
-        assertEquals(2, plan.settings("KeyLookupBenchmark").forks());
-        var search = plan.settings("SearchBenchmark");
+        assertEquals(2, plan.settings("LibraryBenchmark").forks());
+        var search = plan.settings("LibrarySearchBenchmark");
         assertEquals(Duration.ofSeconds(2), search.measurementTime());
         assertEquals(List.of("100000"), search.sizes());
         assertEquals(List.of("zdcache-buffered-indexed", "cqengine"), search.subjects());
@@ -47,20 +47,20 @@ class BenchmarkPlanTest {
 
     @Test void unknownBenchmarksOptionsAndSharedNarrowingAreRejected() {
         assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "PutBenchmark.forks=1\n"));
-        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "SearchBenchmark.threads=4\n"));
+        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "LibrarySearchBenchmark.threads=4\n"));
         assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "*.sizes=10000\n"));
         assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "forks=1\n"));
     }
 
     @Test void valuesOutsideTheLimitsAreRejected() {
-        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "KeyLookupBenchmark.forks=0\n"));
-        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "KeyLookupBenchmark.forks=11\n"));
-        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "KeyLookupBenchmark.measurementIterations=0\n"));
-        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "KeyLookupBenchmark.warmupTime=50ms\n"));
-        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "KeyLookupBenchmark.warmupTime=1m\n"));
-        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "KeyLookupBenchmark.sizes=10k\n"));
-        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "KeyLookupBenchmark.subjects=memcached\n"));
-        assertEquals(0, BenchmarkPlan.parse(EVERY + "KeyLookupBenchmark.warmupIterations=0\n").settings("KeyLookupBenchmark").warmupIterations());
+        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "LibraryBenchmark.forks=0\n"));
+        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "LibraryBenchmark.forks=11\n"));
+        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "LibraryBenchmark.measurementIterations=0\n"));
+        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "LibraryBenchmark.warmupTime=50ms\n"));
+        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "LibraryBenchmark.warmupTime=1m\n"));
+        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "LibraryBenchmark.sizes=10k\n"));
+        assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "LibraryBenchmark.subjects=memcached\n"));
+        assertEquals(0, BenchmarkPlan.parse(EVERY + "LibraryBenchmark.warmupIterations=0\n").settings("LibraryBenchmark").warmupIterations());
     }
 
     @Test void theFullAndQuickPlansAreValid() {
@@ -80,9 +80,9 @@ class BenchmarkPlanTest {
     }
 
     @Test void sizesAreCappedAtOneMillion() {
-        assertEquals(List.of("1000000"), BenchmarkPlan.parse(EVERY + "SearchBenchmark.sizes=1000000\n").settings("SearchBenchmark").sizes());
+        assertEquals(List.of("1000000"), BenchmarkPlan.parse(EVERY + "LibrarySearchBenchmark.sizes=1000000\n").settings("LibrarySearchBenchmark").sizes());
         var thrown = assertThrows(IllegalArgumentException.class,
-            () -> BenchmarkPlan.parse(EVERY + "SearchBenchmark.sizes=1000001\n"));
+            () -> BenchmarkPlan.parse(EVERY + "LibrarySearchBenchmark.sizes=1000001\n"));
         assertTrue(thrown.getMessage().contains("1 to 1000000"));
         assertThrows(IllegalArgumentException.class, () -> BenchmarkPlan.parse(EVERY + "MemoryFootprint.sizes=99999999\n"));
     }

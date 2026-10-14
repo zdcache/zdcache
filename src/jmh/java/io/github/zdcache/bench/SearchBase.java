@@ -1,33 +1,30 @@
 package io.github.zdcache.bench;
 
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import org.openjdk.jmh.annotations.*;
 
 @State(Scope.Benchmark)
-@BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
-@Fork(1)
-@Warmup(iterations = 3, time = 1)
-@Measurement(iterations = 5, time = 1)
-public class SearchBenchmark {
-    @Param({"10000", "100000"})
+public abstract class SearchBase {
+    @Param({"1000", "3000", "5000", "10000", "50000"})
     int size;
-
-    @Param({Subjects.CAFFEINE, Subjects.ZDCACHE_LHM_INDEXED, Subjects.ZDCACHE_CAFFEINE_INDEXED, Subjects.ZDCACHE_BUFFERED_INDEXED,
-            Subjects.GUAVA, Subjects.CACHE2K, Subjects.CQENGINE})
-    String subject;
 
     private CacheSubject cache;
     private Queries queries;
     private int next;
 
+    abstract String subject();
+
     @Setup(Level.Trial)
     public void setUp() {
         Person[] people = Dataset.people(size, 42);
         queries = new Queries(people, 7);
-        cache = Subjects.create(subject, size);
+        cache = Subjects.create(subject(), size);
         for (Person person : people) cache.put(person);
+    }
+
+    @TearDown(Level.Trial)
+    public void tearDown() {
+        cache.close();
     }
 
     private int query() {
