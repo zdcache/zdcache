@@ -7,6 +7,9 @@ public interface CacheSubject {
     Person get(long id);
     Object root();
 
+    default void putAtomically(Person person) { throw new UnsupportedOperationException(); }
+    default void close() { }
+
     default List<Person> byCity(String city) { throw new UnsupportedOperationException(); }
     default List<Person> byNamePrefix(String prefix) { throw new UnsupportedOperationException(); }
     default List<Person> byAge(int from, int to) { throw new UnsupportedOperationException(); }

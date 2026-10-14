@@ -29,6 +29,8 @@ dependencies {
     testImplementation(libs.cache2k.api)
     testRuntimeOnly(libs.cache2k.core)
     testImplementation(libs.cqengine)
+    testImplementation(libs.ehcache)
+    testImplementation(libs.hazelcast)
     testImplementation(libs.jackson.databind)
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

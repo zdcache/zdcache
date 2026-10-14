@@ -3,6 +3,7 @@ package io.github.zdcache.bench;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import io.github.zdcache.IdentityDimension;
+import io.github.zdcache.Locking;
 import io.github.zdcache.Recency;
 import io.github.zdcache.SearchSpecification;
 import io.github.zdcache.ValueRange;
@@ -22,6 +23,21 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import com.hazelcast.config.Config;
+import com.hazelcast.config.InMemoryFormat;
+import com.hazelcast.config.IndexConfig;
+import com.hazelcast.config.IndexType;
+import com.hazelcast.config.MapConfig;
+import com.hazelcast.core.Hazelcast;
+import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.map.IMap;
+import com.hazelcast.query.Predicates;
+import org.ehcache.CacheManager;
+import org.ehcache.config.builders.CacheConfigurationBuilder;
+import org.ehcache.config.builders.CacheManagerBuilder;
+import org.ehcache.config.builders.ResourcePoolsBuilder;
 import org.cache2k.Cache2kBuilder;
 import java.util.function.Predicate;
 
@@ -31,21 +47,28 @@ public final class Subjects {
     public static final String ZDCACHE_CAFFEINE_KEYS = "zdcache-caffeine-keys";
     public static final String ZDCACHE_LHM_INDEXED = "zdcache-lhm-indexed";
     public static final String ZDCACHE_CAFFEINE_INDEXED = "zdcache-caffeine-indexed";
-    public static final String ZDCACHE_LHM_INDEXED_LAMBDA = "zdcache-lhm-indexed-lambda";
     public static final String ZDCACHE_BUFFERED_KEYS = "zdcache-buffered-keys";
     public static final String ZDCACHE_BUFFERED_INDEXED = "zdcache-buffered-indexed";
     public static final String ZDCACHE_APPROXIMATE_KEYS = "zdcache-approximate-keys";
     public static final String ZDCACHE_APPROXIMATE_INDEXED = "zdcache-approximate-indexed";
+    public static final String ZDCACHE_SINGLE_INDEXED = "zdcache-single-indexed";
+    public static final String EHCACHE = "ehcache";
+    public static final String CONCURRENT_HASH_MAP = "concurrent-hash-map";
+    public static final String HAZELCAST = "hazelcast";
     public static final String GUAVA = "guava";
     public static final String CACHE2K = "cache2k";
     public static final String CQENGINE = "cqengine";
 
-    public static final List<String> ALL = List.of(CAFFEINE, ZDCACHE_LHM_KEYS, ZDCACHE_CAFFEINE_KEYS,
-        ZDCACHE_LHM_INDEXED, ZDCACHE_CAFFEINE_INDEXED, ZDCACHE_LHM_INDEXED_LAMBDA,
-        ZDCACHE_BUFFERED_KEYS, ZDCACHE_BUFFERED_INDEXED, ZDCACHE_APPROXIMATE_KEYS, ZDCACHE_APPROXIMATE_INDEXED,
-        GUAVA, CACHE2K, CQENGINE);
-    public static final List<String> SEARCHABLE = List.of(CAFFEINE, ZDCACHE_LHM_INDEXED, ZDCACHE_CAFFEINE_INDEXED,
-        ZDCACHE_BUFFERED_INDEXED, GUAVA, CACHE2K, CQENGINE);
+    public static final List<String> CONFIGURATIONS = List.of(ZDCACHE_BUFFERED_KEYS, ZDCACHE_BUFFERED_INDEXED,
+        ZDCACHE_APPROXIMATE_KEYS, ZDCACHE_APPROXIMATE_INDEXED, ZDCACHE_LHM_KEYS, ZDCACHE_LHM_INDEXED,
+        ZDCACHE_CAFFEINE_KEYS, ZDCACHE_CAFFEINE_INDEXED, ZDCACHE_SINGLE_INDEXED);
+    public static final List<String> INDEXED_CONFIGURATIONS = List.of(ZDCACHE_BUFFERED_INDEXED, ZDCACHE_APPROXIMATE_INDEXED,
+        ZDCACHE_LHM_INDEXED, ZDCACHE_CAFFEINE_INDEXED, ZDCACHE_SINGLE_INDEXED);
+    public static final List<String> OTHER_LIBRARIES = List.of(CAFFEINE, CACHE2K, GUAVA, EHCACHE, CONCURRENT_HASH_MAP,
+        HAZELCAST, CQENGINE);
+    public static final List<String> ALL = java.util.stream.Stream.concat(CONFIGURATIONS.stream(), OTHER_LIBRARIES.stream()).toList();
+    public static final List<String> SEARCHABLE = java.util.stream.Stream.concat(INDEXED_CONFIGURATIONS.stream(),
+        OTHER_LIBRARIES.stream()).toList();
 
     private static final IdentityDimension<Person, Long> ID = IdentityDimension.of(Person.class, "id", Person::id);
 
@@ -62,11 +85,15 @@ public final class Subjects {
             case ZDCACHE_CAFFEINE_KEYS -> zdcache(IdentityStoreFactory.caffeine(), capacity, keysOnly());
             case ZDCACHE_LHM_INDEXED -> zdcache(IdentityStoreFactory.linkedHashMap(), capacity, reflective());
             case ZDCACHE_CAFFEINE_INDEXED -> zdcache(IdentityStoreFactory.caffeine(), capacity, reflective());
-            case ZDCACHE_LHM_INDEXED_LAMBDA -> zdcache(IdentityStoreFactory.linkedHashMap(), capacity, lambdas());
             case ZDCACHE_BUFFERED_KEYS -> zdcache(IdentityStoreFactory.bufferedLru(), capacity, keysOnly());
             case ZDCACHE_BUFFERED_INDEXED -> zdcache(IdentityStoreFactory.bufferedLru(), capacity, reflective());
             case ZDCACHE_APPROXIMATE_KEYS -> zdcache(IdentityStoreFactory.bufferedLru(), Recency.APPROXIMATE, capacity, keysOnly());
             case ZDCACHE_APPROXIMATE_INDEXED -> zdcache(IdentityStoreFactory.bufferedLru(), Recency.APPROXIMATE, capacity, reflective());
+            case ZDCACHE_SINGLE_INDEXED ->
+                zdcache(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).locking(Locking.SINGLE), capacity, reflective());
+            case EHCACHE -> new EhcacheSubject(capacity);
+            case CONCURRENT_HASH_MAP -> new ConcurrentHashMapSubject();
+            case HAZELCAST -> new HazelcastSubject();
             case GUAVA -> new GuavaSubject(capacity);
             case CACHE2K -> new Cache2kSubject(capacity);
             case CQENGINE -> new CQEngineSubject();
@@ -87,15 +114,6 @@ public final class Subjects {
             .build();
     }
 
-    static SearchSpecification<Person, Long> lambdas() {
-        return SearchSpecification.builder(ID)
-            .prefix("name", Person::name)
-            .exact("city", Person::city)
-            .range("age", Person::age)
-            .compound("cityAge", c -> c.exact("city", Person::city).range("age", Person::age))
-            .build();
-    }
-
     private static CacheSubject zdcache(IdentityStoreFactory stores, int capacity, SearchSpecification<Person, Long> spec) {
         return zdcache(ZDCache.builder().identityStore(stores), capacity, spec);
     }
@@ -113,6 +131,7 @@ public final class Subjects {
 
     private record ZDCacheSubject(ZDCache cache) implements CacheSubject {
         @Override public void put(Person person) { cache.put(person); }
+        @Override public void putAtomically(Person person) { cache.atomically(() -> cache.put(person)); }
         @Override public Person get(long id) { return cache.get(Person.class, id); }
         @Override public Object root() { return cache; }
         @Override public List<Person> byCity(String city) { return cache.search(Person.class, "city", city); }
@@ -137,6 +156,72 @@ public final class Subjects {
 
         private List<Person> scan(Predicate<Person> condition) {
             return all().stream().filter(condition).toList();
+        }
+    }
+
+    private static final class EhcacheSubject implements ScanningSubject {
+        private final CacheManager manager;
+        private final org.ehcache.Cache<Long, Person> cache;
+
+        EhcacheSubject(int capacity) {
+            manager = CacheManagerBuilder.newCacheManagerBuilder()
+                .withCache("people", CacheConfigurationBuilder.newCacheConfigurationBuilder(
+                    Long.class, Person.class, ResourcePoolsBuilder.heap(capacity)))
+                .build(true);
+            cache = manager.getCache("people", Long.class, Person.class);
+        }
+
+        @Override public void put(Person person) { cache.put(person.id(), person); }
+        @Override public Person get(long id) { return cache.get(id); }
+        @Override public Object root() { return manager; }
+        @Override public void close() { manager.close(); }
+        @Override public Collection<Person> all() {
+            List<Person> all = new ArrayList<>();
+            for (org.ehcache.Cache.Entry<Long, Person> entry : cache) all.add(entry.getValue());
+            return all;
+        }
+    }
+
+    private static final class ConcurrentHashMapSubject implements ScanningSubject {
+        private final ConcurrentHashMap<Long, Person> map = new ConcurrentHashMap<>();
+
+        @Override public void put(Person person) { map.put(person.id(), person); }
+        @Override public Person get(long id) { return map.get(id); }
+        @Override public Object root() { return map; }
+        @Override public Collection<Person> all() { return map.values(); }
+    }
+
+    private static final class HazelcastSubject implements CacheSubject {
+        private final HazelcastInstance instance;
+        private final IMap<Long, Person> map;
+
+        HazelcastSubject() {
+            Config config = new Config();
+            config.setClusterName("zdcache-bench-" + UUID.randomUUID());
+            config.setProperty("hazelcast.logging.type", "none");
+            config.setProperty("hazelcast.phone.home.enabled", "false");
+            config.getJetConfig().setEnabled(false);
+            config.getNetworkConfig().getJoin().getMulticastConfig().setEnabled(false);
+            config.getNetworkConfig().getJoin().getAutoDetectionConfig().setEnabled(false);
+            config.getNetworkConfig().getJoin().getTcpIpConfig().setEnabled(false);
+            config.addMapConfig(new MapConfig("people")
+                .setInMemoryFormat(InMemoryFormat.OBJECT)
+                .addIndexConfig(new IndexConfig(IndexType.SORTED, "name"))
+                .addIndexConfig(new IndexConfig(IndexType.HASH, "city"))
+                .addIndexConfig(new IndexConfig(IndexType.SORTED, "age")));
+            instance = Hazelcast.newHazelcastInstance(config);
+            map = instance.getMap("people");
+        }
+
+        @Override public void put(Person person) { map.set(person.id(), person); }
+        @Override public Person get(long id) { return map.get(id); }
+        @Override public Object root() { return map; }
+        @Override public void close() { instance.shutdown(); }
+        @Override public List<Person> byCity(String city) { return List.copyOf(map.values(Predicates.equal("city", city))); }
+        @Override public List<Person> byNamePrefix(String prefix) { return List.copyOf(map.values(Predicates.like("name", prefix + "%"))); }
+        @Override public List<Person> byAge(int from, int to) { return List.copyOf(map.values(Predicates.between("age", from, to))); }
+        @Override public List<Person> byCityAndAge(String city, int from, int to) {
+            return List.copyOf(map.values(Predicates.and(Predicates.equal("city", city), Predicates.between("age", from, to))));
         }
     }
 

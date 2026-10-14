@@ -29,6 +29,16 @@ public final class Dataset {
         return changed;
     }
 
+    public static Person[] retagged(Person[] people, long seed) {
+        Random random = new Random(seed);
+        Person[] retagged = new Person[people.length];
+        for (int i = 0; i < people.length; i++) {
+            Person person = people[i];
+            retagged[i] = new Person(person.id(), person.name(), person.city(), person.age(), tags(random));
+        }
+        return retagged;
+    }
+
     public static int[] accessOrder(int size, int length, long seed) {
         Random random = new Random(seed);
         int[] order = new int[length];
@@ -39,8 +49,13 @@ public final class Dataset {
     private static Person person(long id, Random random) {
         char[] name = new char[6];
         for (int c = 0; c < name.length; c++) name[c] = (char) ('a' + random.nextInt(26));
+        List<String> tags = tags(random);
+        return new Person(id, new String(name), city(random.nextInt(CITIES)), 18 + random.nextInt(63), tags);
+    }
+
+    private static List<String> tags(Random random) {
         List<String> tags = new ArrayList<>();
         for (int t = random.nextInt(4); t > 0; t--) tags.add(TAGS.get(random.nextInt(TAGS.size())));
-        return new Person(id, new String(name), city(random.nextInt(CITIES)), 18 + random.nextInt(63), List.copyOf(tags));
+        return List.copyOf(tags);
     }
 }

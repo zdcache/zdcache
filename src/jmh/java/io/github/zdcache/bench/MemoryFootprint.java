@@ -13,11 +13,12 @@ import org.openjdk.jol.info.GraphLayout;
 public final class MemoryFootprint {
     private static List<Integer> SIZES = List.of(10_000, 100_000);
     private static final List<String> KEY_ONLY =
-        List.of(Subjects.CAFFEINE, Subjects.ZDCACHE_LHM_KEYS, Subjects.ZDCACHE_CAFFEINE_KEYS, Subjects.ZDCACHE_BUFFERED_KEYS,
-            Subjects.GUAVA, Subjects.CACHE2K);
+        List.of(Subjects.ZDCACHE_BUFFERED_KEYS, Subjects.ZDCACHE_APPROXIMATE_KEYS, Subjects.ZDCACHE_LHM_KEYS,
+            Subjects.ZDCACHE_CAFFEINE_KEYS, Subjects.CAFFEINE, Subjects.CACHE2K, Subjects.GUAVA, Subjects.EHCACHE,
+            Subjects.CONCURRENT_HASH_MAP);
     private static final List<String> INDEXED =
-        List.of(Subjects.ZDCACHE_LHM_INDEXED, Subjects.ZDCACHE_CAFFEINE_INDEXED, Subjects.ZDCACHE_BUFFERED_INDEXED,
-            Subjects.CQENGINE);
+        List.of(Subjects.ZDCACHE_BUFFERED_INDEXED, Subjects.ZDCACHE_APPROXIMATE_INDEXED, Subjects.ZDCACHE_LHM_INDEXED,
+            Subjects.ZDCACHE_CAFFEINE_INDEXED, Subjects.ZDCACHE_SINGLE_INDEXED, Subjects.CQENGINE);
 
     public static void main(String[] args) throws IOException {
         if (args.length > 1) SIZES = BenchmarkPlan.read(Path.of(args[1])).footprintSizes();
@@ -82,10 +83,13 @@ public final class MemoryFootprint {
     static double bytesPerEntry(String subject, int size) {
         Person[] people = Dataset.people(size, 42);
         long peopleBytes = GraphLayout.parseInstance((Object) people).totalSize();
-        long empty = GraphLayout.parseInstance(Subjects.create(subject, size, true).root()).totalSize();
+        CacheSubject emptyCache = Subjects.create(subject, size, true);
+        long empty = GraphLayout.parseInstance(emptyCache.root()).totalSize();
+        emptyCache.close();
         CacheSubject filled = Subjects.create(subject, size, true);
         for (Person person : people) filled.put(person);
         long total = GraphLayout.parseInstance(filled.root(), (Object) people).totalSize();
+        filled.close();
         return (double) (total - peopleBytes - empty) / size;
     }
 }

@@ -14,7 +14,7 @@ import org.openjdk.jmh.annotations.*;
 public class LockingBenchmark {
     private static final int ORDER_MASK = (1 << 16) - 1;
 
-    @Param({"100000"})
+    @Param({"1000", "3000", "5000", "10000", "50000"})
     int size;
 
     @Param({"PER_TYPE", "SINGLE"})

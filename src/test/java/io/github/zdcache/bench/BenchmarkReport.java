@@ -38,13 +38,31 @@ public final class BenchmarkReport {
         new Row(Subjects.CAFFEINE, "Caffeine"),
         new Row(Subjects.CACHE2K, "cache2k"),
         new Row(Subjects.GUAVA, "Guava"),
+        new Row(Subjects.EHCACHE, "Ehcache"),
+        new Row(Subjects.CONCURRENT_HASH_MAP, "ConcurrentHashMap, no eviction"),
+        new Row(Subjects.HAZELCAST, "Hazelcast, 3 indexes"),
         new Row(Subjects.CQENGINE, "CQEngine, 4 indexes"));
+    private static final List<Row> CONFIGURATIONS = List.of(
+        new Row(Subjects.ZDCACHE_BUFFERED_KEYS, "Buffered LRU (default)"),
+        new Row(Subjects.ZDCACHE_BUFFERED_INDEXED, "Buffered LRU, 4 indexes"),
+        new Row(Subjects.ZDCACHE_APPROXIMATE_KEYS, "Approximate recency"),
+        new Row(Subjects.ZDCACHE_APPROXIMATE_INDEXED, "Approximate recency, 4 indexes"),
+        new Row(Subjects.ZDCACHE_LHM_KEYS, "LinkedHashMap store"),
+        new Row(Subjects.ZDCACHE_LHM_INDEXED, "LinkedHashMap store, 4 indexes"),
+        new Row(Subjects.ZDCACHE_CAFFEINE_KEYS, "Caffeine store"),
+        new Row(Subjects.ZDCACHE_CAFFEINE_INDEXED, "Caffeine store, 4 indexes"),
+        new Row(Subjects.ZDCACHE_SINGLE_INDEXED, "`Locking.SINGLE`, 4 indexes"));
     private static final List<Row> SEARCHERS = List.of(
         new Row(Subjects.ZDCACHE_BUFFERED_INDEXED, "zdcache, 4 indexes"),
+        new Row(Subjects.ZDCACHE_APPROXIMATE_INDEXED, "zdcache, approximate, 4 indexes"),
+        new Row(Subjects.HAZELCAST, "Hazelcast, 3 indexes"),
         new Row(Subjects.CQENGINE, "CQEngine, 4 indexes"),
         new Row(Subjects.CAFFEINE, "Caffeine (full scan)"),
         new Row(Subjects.CACHE2K, "cache2k (full scan)"),
-        new Row(Subjects.GUAVA, "Guava (full scan)"));
+        new Row(Subjects.GUAVA, "Guava (full scan)"),
+        new Row(Subjects.EHCACHE, "Ehcache (full scan)"),
+        new Row(Subjects.CONCURRENT_HASH_MAP, "ConcurrentHashMap (full scan)"));
+    private static final List<String> QUERIES = List.of("prefixName", "exactCity", "compoundCityAge", "rangeAge");
 
     private static final List<Row> LOCKINGS = List.of(
         new Row("zdcache-locking-per-type", "zdcache, `Locking.PER_TYPE`"),
@@ -121,8 +139,20 @@ public final class BenchmarkReport {
         out.append("**Single thread and memory**\n\n| | get | put | Memory per entry |\n|---|---:|---:|---:|\n");
         for (Row row : LIBRARIES) {
             out.append("| ").append(row.label())
-                .append(" | ").append(cell(primary(run, "KeyLookupBenchmark.get", row.subject(), size), BenchmarkReport::time))
-                .append(" | ").append(cell(primary(run, "KeyLookupBenchmark.put", row.subject(), size), BenchmarkReport::time))
+                .append(" | ").append(cell(primary(run, "LibraryBenchmark.get", row.subject(), size), BenchmarkReport::time))
+                .append(" | ").append(cell(primary(run, "LibraryBenchmark.put", row.subject(), size), BenchmarkReport::time))
+                .append(" | ").append(cell(bytes(run, row.subject(), size), BenchmarkReport::memory))
+                .append(" |\n");
+        }
+
+        out.append("\n**zdcache configurations, single thread**\n\n"
+            + "| | get | put | put in `atomically` | Prefix search | Memory per entry |\n|---|---:|---:|---:|---:|---:|\n");
+        for (Row row : CONFIGURATIONS) {
+            out.append("| ").append(row.label());
+            for (String benchmark : List.of("get", "put", "putAtomically")) {
+                out.append(" | ").append(cell(primary(run, "ConfigurationBenchmark." + benchmark, row.subject(), size), BenchmarkReport::time));
+            }
+            out.append(" | ").append(cell(primary(run, "ConfigurationSearchBenchmark.prefixName", row.subject(), size), BenchmarkReport::time))
                 .append(" | ").append(cell(bytes(run, row.subject(), size), BenchmarkReport::memory))
                 .append(" |\n");
         }
@@ -156,8 +186,8 @@ public final class BenchmarkReport {
         out.append("\n**Search**\n\n| | Prefix | Exact | Compound | Range |\n|---|---:|---:|---:|---:|\n");
         for (Row row : SEARCHERS) {
             out.append("| ").append(row.label());
-            for (String query : List.of("prefixName", "exactCity", "compoundCityAge", "rangeAge")) {
-                out.append(" | ").append(cell(primary(run, "SearchBenchmark." + query, row.subject(), size), BenchmarkReport::time));
+            for (String query : QUERIES) {
+                out.append(" | ").append(cell(primary(run, "LibrarySearchBenchmark." + query, row.subject(), size), BenchmarkReport::time));
             }
             out.append(" |\n");
         }
