@@ -53,21 +53,21 @@ public class ConcurrentBenchmark {
     }
 
     @Benchmark
-    @Threads(8)
+    @Threads(4)
     public Person readOnly(Cursor cursor) {
         return cache.get(cursor.nextIndex());
     }
 
     @Benchmark
     @Group("mixed")
-    @GroupThreads(6)
+    @GroupThreads(3)
     public Person mixedRead(Cursor cursor) {
         return cache.get(cursor.nextIndex());
     }
 
     @Benchmark
     @Group("mixed")
-    @GroupThreads(2)
+    @GroupThreads(1)
     public void mixedWrite(Cursor cursor) {
         int i = cursor.next;
         cache.put(versions[(i >>> 16) & 1][cursor.nextIndex()]);

@@ -69,7 +69,7 @@ public class LockingBenchmark {
 
     @Benchmark
     @Group("mixed")
-    @GroupThreads(6)
+    @GroupThreads(2)
     public MultiTypeCache.Account mixedRead(Cursor cursor) {
         int index = cursor.nextIndex();
         return cache.read(index % MultiTypeCache.TYPES, index);

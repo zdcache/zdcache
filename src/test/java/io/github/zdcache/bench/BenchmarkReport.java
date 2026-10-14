@@ -158,7 +158,7 @@ public final class BenchmarkReport {
                 .append(" |\n");
         }
 
-        out.append("\n**Concurrent, 8 threads (million operations per second)**\n\n"
+        out.append("\n**Concurrent, 4 threads (million operations per second)**\n\n"
             + "| | Reads only | Mixed: reads | Mixed: writes |\n|---|---:|---:|---:|\n");
         for (Row row : LIBRARIES) {
             out.append("| ").append(row.label())
