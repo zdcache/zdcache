@@ -204,5 +204,6 @@ tasks.register<PublishBenchmarkReport>("publishBenchmarkReport") {
     runMode = layout.buildDirectory.file("reports/zdcache-benchmark/run-mode.txt")
     publishedReport = layout.projectDirectory.file("docs/benchmark/index.html")
     readme = layout.projectDirectory.file("README.md")
+    mustRunAfter("benchmarkReport")
     outputs.upToDateWhen { false }
 }

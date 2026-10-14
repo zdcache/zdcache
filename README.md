@@ -242,25 +242,79 @@ lock, but ordinary writes to different types no longer run in parallel.
 
 ## Choosing a configuration
 
-The default, `ZDCache.builder().build()`, gives the buffered LRU store with strict recency and one lock per
-type. It suits most applications: on one thread its key lookup keeps pace with Caffeine's at every measured
-size (25 against 27 ns for `get` and 85 against 87 ns for `put` at 50,000 entries, and faster below that),
-eviction follows exact LRU order, and concurrent reads reach 35–45% of Caffeine's rate. The figures come from
-the published benchmark run below.
+Three configurations cover most uses. They differ in how often entries change, how many threads use the
+cache and whether a type is searched. The figures come from the published benchmark run below, on one thread
+unless stated, between 1,000 and 50,000 entries per type.
 
-| Situation | Configuration | Why |
+### 1. Read-mostly data that is searched: the default
+
+```java
+var cache = ZDCache.builder().build();                     // buffered LRU, strict recency, Locking.PER_TYPE
+```
+
+Shines when entries are put seldom and read often, by key or by search: reference data, catalogues, or
+configuration loaded at start-up and refreshed now and then.
+
+- `get` takes 18–28 ns with or without indexes, in the same range as Caffeine's 19–27 ns.
+- Searches through indexes take 0.05–1 µs at 1,000 entries, up to 8 µs at 10,000 and up to 56 µs at 50,000,
+  where the broadest query, an age range, returns about 8,000 entries. Scanning a cache without indexes is
+  6–1,900× slower, even at 1,000 entries.
+- Eviction follows exact LRU order.
+- The cost is in `put`: with four indexes it takes 0.5 µs at 1,000 entries and 1.5 µs at 50,000, which hardly
+  matters when puts are rare.
+
+### 2. Searched data that is updated often: one entry per id
+
+```java
+var cache = ZDCache.builder().entries(Entries.PER_ID).build();
+```
+
+Shines when indexed entries are replaced often, above all when an update leaves most indexed values as they
+were, such as a status or a balance changing while the name and city stay the same.
+
+- An update that keeps the indexed values takes 235–454 ns instead of 475–1,021 ns, 2.0–2.3× faster.
+- An update that changes every indexed value is still 1.3–2.0× faster, most at small sizes: 247 against 498 ns
+  at 1,000 entries, 1.2 against 1.5 µs at 50,000.
+- `get`, searches and memory per entry are the same as with the default. Types without indexes are not
+  affected.
+
+### 3. Key lookups from many threads: approximate recency
+
+```java
+var cache = ZDCache.builder().recency(Recency.APPROXIMATE).build();
+```
+
+Shines when many threads get and put types without indexes, such as session or token caches, or lookups in
+front of a slower service.
+
+- With four threads, 1.4–1.5× the reads of strict mode, and under mixed load 2.4–2.6× the reads and 2.6–4.8×
+  the writes; reads at 50–65% of Caffeine's rate and writes at about 80%.
+- Writes to types without indexes run without the type's lock. Writes to types with indexes take the lock in
+  either mode, so they gain little.
+- Eviction order is approximate under contention. The figures come from four threads on a machine with five
+  performance cores; with more threads than fast cores, approximate recency has fallen behind strict mode, so
+  measure with your own thread count before switching.
+
+Approximate recency only changes types without indexes and one entry per id only changes types with indexes,
+so a cache holding both kinds can use both settings. That combination is not benchmarked.
+
+### Size
+
+Up to about 10,000 entries per type every configuration is quick: a `put` with four indexes stays under
+0.85 µs (0.47 µs with one entry per id), every search finishes within 8 µs, and a `put` without indexes is
+1.3–1.6× faster than Caffeine's (29–43 against 46–65 ns). At 50,000 entries a `put` without indexes is level
+with Caffeine's, a `put` with four indexes takes up to 1.5 µs and the broadest searches up to 56 µs.
+
+### Other settings
+
+| Situation | Setting | Why |
 |---|---|---|
-| Most applications | The default | Keeps pace with Caffeine on one thread, strict LRU, every search through indexes |
-| Many threads reading and writing key-only types | `recency(Recency.APPROXIMATE)` | 1.4–1.5× the reads of strict mode, and under mixed load 2.4–2.6× the reads and 2.6–4.8× the writes; reads at 50–65% of Caffeine's rate and writes at about 80% |
 | Different threads writing different types | `locking(Locking.PER_TYPE)`, the default | Writes to separate types run about six times faster than with `SINGLE` |
 | Most writes in `atomically` blocks, or writes must happen one at a time | `locking(Locking.SINGLE)` | A block takes one lock instead of one per type; blocks run at the same rate under either setting, and on one thread `SINGLE` costs about the same |
 | One thread, tight on memory | `identityStore(IdentityStoreFactory.linkedHashMap())` | 99 instead of 123 bytes per entry and faster single-threaded writes (51 against 70 ns at 50,000 entries), but concurrent reads run three to four times slower |
 | Caffeine as the identity store | Not recommended | Not LRU, slower single-threaded `get` (39–49 ns against 19–26 ns) and the most memory per entry of the zdcache stores, though under concurrent mixed load it reads and writes faster than the default store |
 
-Approximate recency speeds up writes to key-only types, which it lets run without the type's lock. Writes to
-types with indexes take the lock in either mode, so they gain little. The figures come from four threads on a
-machine with five performance cores; with more threads than fast cores, approximate recency has fallen behind
-strict mode, so measure with your own thread count before switching.
+### Indexes
 
 Indexes matter more for performance than the store. Each one is updated on every `put`: four indexes take a
 `put` from 30–85 ns to 0.5–1.5 µs, depending on size, and memory from 123 to 434 bytes per entry, so declare
@@ -286,7 +340,7 @@ Switch to `recency(Recency.APPROXIMATE)` when profiling shows many threads waiti
 
 ## Benchmark
 
-There are two sets of benchmarks. The configuration benchmarks run zdcache alone, in every identity store with and without indexes and with `Locking.SINGLE`, measuring `get`, `put`, `put` inside `atomically` and searches. The library benchmarks compare zdcache's two recommended configurations, the default and approximate recency, with Caffeine, cache2k, Guava, Ehcache, a plain `ConcurrentHashMap`, embedded Hazelcast and CQEngine. Both measure single-threaded `get` and `put` and prefix, exact, compound and range searches at 1,000, 3,000, 5,000, 10,000 and 50,000 entries. Four threads reading and writing concurrently, and locking across four types, are measured at 10,000 and 50,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
+There are two sets of benchmarks. The configuration benchmarks run zdcache alone, in every identity store with and without indexes, with `Locking.SINGLE` and with one entry per id, measuring `get`, `put`, `put` inside `atomically` and searches. The library benchmarks compare zdcache's default configuration and approximate recency, each with and without indexes, against Caffeine, cache2k, Guava, Ehcache, a plain `ConcurrentHashMap`, embedded Hazelcast and CQEngine. Both measure single-threaded `get` and `put` and prefix, exact, compound and range searches at 1,000, 3,000, 5,000, 10,000 and 50,000 entries. Four threads reading and writing concurrently, and locking across four types, are measured at 10,000 and 50,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
 
 **[Open the full interactive report](https://zdcache.github.io/zdcache/benchmark/)** for every library and every zdcache configuration at every size, with confidence intervals and a table view.
 
