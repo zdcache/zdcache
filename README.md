@@ -193,6 +193,53 @@ searchable type raises `UnknownSearchDimensionException`.
   under the type lock when settling. Its eviction callback only
   queues index-cleanup work, and never takes an external lock.
 
+## Locking and atomicity
+
+Every single call is atomic on its own: a `put`, `remove` or `search` never sees, or leaves behind, half an
+update of one type. Two settings decide what happens beyond that.
+
+| | `Locking.PER_TYPE` (default) | `Locking.SINGLE` |
+|---|---|---|
+| Locks | One read-write lock per type | One read-write lock shared by every type |
+| Writes to different types | Run in parallel | Wait for each other |
+| Searches, `peek`, `values` | Run in parallel | Run in parallel |
+| `get` on the buffered or Caffeine store | Lock-free | Lock-free |
+| `atomically(...)` | Takes every type's lock, in a fixed order | Takes the one shared lock |
+| Choose it when | Types are written independently, which suits most workloads | Writes must happen one at a time across all types, or most writes run in `atomically` blocks |
+
+`atomically(...)` works with both settings. Use it when several calls must look like one step to other
+threads:
+
+```java
+record Customer(long id, String name, int openOrders) {}
+record Order(long id, long customerId) {}
+
+// Each call is atomic, but another thread can run between them and see the order
+// removed while the customer still counts it:
+cache.remove(Order.class, 42L);
+Customer customer = cache.get(Customer.class, 7L);
+cache.put(new Customer(customer.id(), customer.name(), customer.openOrders() - 1));
+
+// As one step: other threads see both changes or neither.
+cache.atomically(() -> {
+    Customer current = cache.get(Customer.class, 7L);
+    cache.remove(Order.class, 43L);
+    cache.put(new Customer(current.id(), current.name(), current.openOrders() - 1));
+});
+
+// Read several types as one consistent view; the block returns a value:
+List<Order> open = cache.atomically(() -> {
+    Customer current = cache.get(Customer.class, 7L);
+    return current.openOrders() == 0 ? List.of() : cache.search(Order::customerId, 7L);
+});
+```
+
+While a block runs, every other thread that reads or writes the cache waits, including lock-free `get`, in
+both settings. Keep blocks short, and do not wait inside a block for another thread that uses the cache: it
+cannot proceed until the block ends. A block nested inside another runs as part of the outer one. With
+`PER_TYPE` a block takes one lock per type, so blocks cost more with many types; with `SINGLE` they take one
+lock, but ordinary writes to different types no longer run in parallel.
+
 ## Benchmark
 
 zdcache is compared with three key-value caches (Caffeine, cache2k and Guava) and with CQEngine, an indexed in-memory collection. JMH measures single-threaded `get` and `put`, eight threads reading and writing concurrently, and prefix, exact, compound and range searches at 10,000 and 100,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
@@ -245,6 +292,54 @@ Measured 2026-10-13T22:57:53Z on Java 21.0.6 with 11 CPUs, 3 forks per benchmark
 How to read it: on one thread, zdcache's key lookup is as fast as Caffeine's or faster in both recency modes (24 ns for `get`, 76–85 ns for `put`), with cache2k the fastest, and keeping four indexes up to date costs about 2.3 µs per `put`. Searches through indexes are about 15× faster than CQEngine for prefix and compound queries, 1.5× for exact and range queries, and 9–2,000× faster than scanning a cache. Under concurrent load the default strict LRU store reads at about 45% of Caffeine's rate and writes at under a tenth of it. With `recency(Recency.APPROXIMATE)` zdcache reads at 65–90% of Caffeine's rate between runs and writes at about 40% of it, giving up exact LRU order under heavy contention. Choose zdcache when you look cached objects up by more than their key; for key-only caching with many concurrent writes, Caffeine or cache2k fits better.
 
 None of the benchmarks put the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts in LRU order per segment and zdcache in strict LRU order by default. CQEngine never evicts.
+
+### What is measured
+
+| Benchmark | Measures | Threads | Entries | Workload |
+|---|---|---:|---|---|
+| `KeyLookupBenchmark.get` | Average time per `get` | 1 | 10,000 and 100,000 | Random keys from a fixed sequence of 65,536; every key is present |
+| `KeyLookupBenchmark.put` | Average time per `put` | 1 | 10,000 and 100,000 | Replaces existing entries, alternating between two versions of each person |
+| `SearchBenchmark.prefixName` | Average time per search | 1 | 10,000 and 100,000 | The first two letters of a random person's name |
+| `SearchBenchmark.exactCity` | Average time per search | 1 | 10,000 and 100,000 | One of 50 cities, about 2% of the entries |
+| `SearchBenchmark.rangeAge` | Average time per search | 1 | 10,000 and 100,000 | A 10-year age window, about 16% of the entries |
+| `SearchBenchmark.compoundCityAge` | Average time per search | 1 | 10,000 and 100,000 | A city and a 10-year age window |
+| `ConcurrentBenchmark.readOnly` | Operations per second | 8 | 100,000 | Every thread reads random keys |
+| `ConcurrentBenchmark.mixed` | Operations per second, reads and writes separately | 6 + 2 | 100,000 | Six threads read while two replace existing entries |
+| `MemoryFootprint` | Heap bytes per entry, measured with JOL | – | 10,000 and 100,000 | The cache filled with every person, not counting the person objects themselves |
+
+Every entry is a `Person(id, name, city, age, tags)` with a six-letter random name, one of 50 cities, an age
+from 18 to 80 and up to three tags, generated from a fixed seed. Each cache can hold every entry, so nothing
+is evicted.
+
+| Subject in the report | Library | Identity store | Recency | Indexes | Benchmarks |
+|---|---|---|---|---|---|
+| zdcache | zdcache | Buffered LRU (default) | Strict | None | Key lookup, concurrent, memory |
+| zdcache, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | All |
+| zdcache, approximate recency | zdcache | Buffered LRU | Approximate | None | Key lookup, concurrent |
+| zdcache, approximate, 4 indexes | zdcache | Buffered LRU | Approximate | 4 | Key lookup, concurrent |
+| LinkedHashMap | zdcache | LinkedHashMap | Strict | None | Key lookup, concurrent, memory |
+| LinkedHashMap, 4 indexes | zdcache | LinkedHashMap | Strict | 4 | All |
+| LinkedHashMap, 4 indexes, lambdas | zdcache | LinkedHashMap | Strict | 4, declared with lambdas | Key lookup |
+| Caffeine store | zdcache | Caffeine | Frequency-aware | None | Key lookup, concurrent, memory |
+| Caffeine store, 4 indexes | zdcache | Caffeine | Frequency-aware | 4 | All |
+| Caffeine | Caffeine 3.2.4 | – | Frequency-aware | None; searches scan | All |
+| cache2k | cache2k 2.6.1 | – | Clock-Pro | None; searches scan | All |
+| Guava | Guava 33.7.2 | – | LRU per segment | None; searches scan | All |
+| CQEngine, 4 indexes | CQEngine 3.6.0 | – | Never evicts | 4 | All |
+
+The four zdcache indexes are name (prefix), city (exact), age (range) and city with age (compound). The
+other zdcache subjects declare them by property name. CQEngine uses radix-tree, hash and navigable
+indexes, answers the compound query with two of them, and has its writes serialized. Guava gets 5% extra
+capacity so its per-segment limits do not evict early. Caffeine runs its maintenance on its default
+executor; the Caffeine store inside zdcache runs it on the calling thread.
+
+Every benchmark uses one type, so `Locking.PER_TYPE` and `Locking.SINGLE` behave the same and `atomically`
+is not measured. Every zdcache subject uses the default `Locking.PER_TYPE`.
+
+| Plan | Forks | Warm-up | Measurement | Time |
+|---|---|---|---|---|
+| `benchmark-full.properties` | 3 per benchmark | 1 × 1 s for key lookup, 1 × 500 ms for concurrent, 1 × 600 ms for search | 2 × 300 ms, 2 × 500 ms for concurrent | About 12 minutes |
+| `benchmark-quick.properties` | 1, 2 for concurrent | As the full plan | As the full plan | About 5 minutes |
 
 ### Running the benchmark
 
