@@ -240,6 +240,44 @@ cannot proceed until the block ends. A block nested inside another runs as part 
 `PER_TYPE` a block takes one lock per type, so blocks cost more with many types; with `SINGLE` they take one
 lock, but ordinary writes to different types no longer run in parallel.
 
+## Choosing a configuration
+
+The default, `ZDCache.builder().build()`, gives the buffered LRU store with strict recency and one lock per
+type. It suits most applications: on one thread its key lookup is as fast as Caffeine's (about 25 ns for
+`get` and 100 ns for `put`, against 29 and 121 ns), eviction follows exact LRU order, and concurrent reads
+reach about 45% of Caffeine's rate. The figures come from the published benchmark run below.
+
+| Situation | Configuration | Why |
+|---|---|---|
+| Most applications | The default | As fast as Caffeine on one thread, strict LRU, every search through indexes |
+| Many threads reading and writing | `recency(Recency.APPROXIMATE)` | 1.5× the reads, 2× the reads under mixed load and 5× the writes of strict mode; reads at 50–90% of Caffeine's rate and writes at about 35–40% |
+| Different threads writing different types | `locking(Locking.PER_TYPE)`, the default | Writes to separate types run about six times faster than with `SINGLE` |
+| Most writes in `atomically` blocks, or writes must happen one at a time | `locking(Locking.SINGLE)` | A block takes one lock instead of one per type; blocks run at the same rate under either setting |
+| One thread, tight on memory | `identityStore(IdentityStoreFactory.linkedHashMap())` | 99 instead of 123 bytes per entry and faster single-threaded writes, but concurrent reads run about five times slower |
+| Caffeine as the identity store | Not recommended | Not LRU, slower single-threaded `get` (42–47 ns) and the most memory per entry |
+
+Indexes matter more for performance than the store. Each one is updated on every `put`: four indexes take a
+`put` from about 100 ns to about 2.5 µs and memory from 123 to 424 bytes per entry, so declare only the
+dimensions you search on. A compound index pays off for combinations you search often: an exact city with an
+age range takes 2.3 µs as a compound, against 156 µs for the age range on its own, because the city narrows
+the matches first. Method references, lambdas and property names cost about the same per `put`; method
+references keep dimension names right when properties are renamed.
+
+```java
+record Person(long id, String name, String city, int age) {}
+
+var cache = ZDCache.builder()
+    .defaultMaxPerType(100_000)                                            // room for the working set
+    .build();                                                              // buffered LRU, strict, PER_TYPE
+
+var spec = SearchSpecification.builder(IdentityDimension.of(Person.class, "id", Person::id))
+    .prefix(Person::name)                                                  // only what you search on
+    .compound("cityAge", c -> c.exact(Person::city).range(Person::age))    // for a frequent combination
+    .build();
+```
+
+Switch to `recency(Recency.APPROXIMATE)` when profiling shows many threads waiting on the cache.
+
 ## Benchmark
 
 zdcache is compared with three key-value caches (Caffeine, cache2k and Guava) and with CQEngine, an indexed in-memory collection. JMH measures single-threaded `get` and `put`, eight threads reading and writing concurrently, and prefix, exact, compound and range searches at 10,000 and 100,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
