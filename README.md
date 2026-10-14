@@ -72,8 +72,9 @@ cache.put(new Person(2, "Simone", 25, List.of()));
 // The method reference gives both the type and the dimension:
 List<Person> people = cache.search(Person::name, "si");
 List<Person> aged = cache.search(Person::age, ValueRange.between(20, 40));
-// Nested dimensions are searched by their path:
+// Nested dimensions by their path, as a compact string or as a chain of method references:
 List<Person> inOslo = cache.search(Person.class, "addresses.city", "os");
+List<Person> inOsloToo = cache.search(Person::addresses, Address::city, "os");
 Person one = cache.get(Person.class, 1L);
 
 // Full per-type reindex; unchanged identity object is required.
@@ -102,7 +103,7 @@ cache.clear(Person.class);
 
 ### Other ways to declare and search
 
-Method references keep dimension names and searches in sync when a property is renamed. Explicit names, lambdas and property names are also supported, and every search can name its dimension as a string. A type has one specification, so use this equivalent declaration instead of the one above, not alongside it:
+Method references keep dimension names and searches in sync when a property is renamed; a chain of method references searches nested dimensions up to five levels deep, and deeper paths use the string. Explicit names, lambdas and property names are also supported, and every search can name its dimension as a string. A type has one specification, so use this equivalent declaration instead of the one above, not alongside it:
 
 ```java
 var equivalentSpec = SearchSpecification.builder(personId)

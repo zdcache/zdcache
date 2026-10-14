@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.StringJoiner;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -287,6 +288,32 @@ public final class ZDCache {
 
     public <T> List<T> search(Getter<T, ?> dimension, Object... values) {
         return search(Getters.<T>type(dimension), Getters.name(dimension), values);
+    }
+
+    public <T, A> List<T> search(Getter<T, ? extends Iterable<A>> first, Getter<A, ?> second, Object... values) {
+        return search(Getters.<T>type(first), path(first, second), values);
+    }
+
+    public <T, A, B> List<T> search(Getter<T, ? extends Iterable<A>> first, Getter<A, ? extends Iterable<B>> second,
+                                    Getter<B, ?> third, Object... values) {
+        return search(Getters.<T>type(first), path(first, second, third), values);
+    }
+
+    public <T, A, B, C> List<T> search(Getter<T, ? extends Iterable<A>> first, Getter<A, ? extends Iterable<B>> second,
+                                       Getter<B, ? extends Iterable<C>> third, Getter<C, ?> fourth, Object... values) {
+        return search(Getters.<T>type(first), path(first, second, third, fourth), values);
+    }
+
+    public <T, A, B, C, D> List<T> search(Getter<T, ? extends Iterable<A>> first, Getter<A, ? extends Iterable<B>> second,
+                                          Getter<B, ? extends Iterable<C>> third, Getter<C, ? extends Iterable<D>> fourth,
+                                          Getter<D, ?> fifth, Object... values) {
+        return search(Getters.<T>type(first), path(first, second, third, fourth, fifth), values);
+    }
+
+    private static String path(Getter<?, ?>... steps) {
+        StringJoiner path = new StringJoiner(".");
+        for (Getter<?, ?> step : steps) path.add(Getters.name(step));
+        return path.toString();
     }
 
     public <T> List<T> search(Class<T> type, Getter<? super T, ?> dimension, Object... values) {
