@@ -12,7 +12,7 @@ import org.openjdk.jmh.annotations.*;
 public class ConfigurationSearchBenchmark extends SearchBase {
     @Param({Subjects.ZDCACHE_BUFFERED_INDEXED, Subjects.ZDCACHE_APPROXIMATE_INDEXED, Subjects.ZDCACHE_LHM_INDEXED,
             Subjects.ZDCACHE_CAFFEINE_INDEXED, Subjects.ZDCACHE_SINGLE_INDEXED,
-            Subjects.ZDCACHE_PER_ID_INDEXED})
+            Subjects.ZDCACHE_PER_PUT_INDEXED})
     String subject;
 
     @Override String subject() { return subject; }

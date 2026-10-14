@@ -156,7 +156,7 @@ const VIEWS = [
     ] },
   { key: "stores", name: "zdcache configurations", highlightName: "Default configuration", otherName: "Other configurations",
     subtitle: "zdcache only, in each configuration: the default buffered LRU store, approximate recency, the LinkedHashMap "
-      + "store and the Caffeine store, with and without indexes, single locking and one entry per id. Every chart uses a log scale.",
+      + "store and the Caffeine store, with and without indexes, single locking and one entry per put. Every chart uses a log scale.",
     rows: [
       { subject: "zdcache-buffered-keys", label: "Buffered LRU (default)", highlight: true },
       { subject: "zdcache-buffered-indexed", label: "Buffered LRU, 4 indexes", highlight: true },
@@ -167,7 +167,7 @@ const VIEWS = [
       { subject: "zdcache-caffeine-keys", label: "Caffeine store" },
       { subject: "zdcache-caffeine-indexed", label: "Caffeine store, 4 indexes" },
       { subject: "zdcache-single-indexed", label: "SINGLE locking, 4 indexes" },
-      { subject: "zdcache-per-id-indexed", label: "One entry per id, 4 indexes" },
+      { subject: "zdcache-per-put-indexed", label: "One entry per put, 4 indexes" },
       { subject: "zdcache-locking-per-type", label: "PER_TYPE locking (default)", highlight: true },
       { subject: "zdcache-locking-single", label: "SINGLE locking" },
     ] },
@@ -212,9 +212,11 @@ const PARTS = [
       { title: "Mixed: writes", benchmark: "LockingBenchmark.mixed", metric: "mixedWrite", lowerIsBetter: false },
     ] },
   { title: "Memory", sized: true,
-    text: "Heap bytes per cached entry, measured with JOL, excluding the cached objects themselves.",
+    text: "Heap bytes per cached entry, measured with JOL, excluding the cached objects themselves. The second chart "
+      + "runs the JVM with compact object headers (-XX:+UseCompactObjectHeaders), which Java 25 supports but leaves off.",
     charts: [
-      { title: "Bytes per entry", footprint: true, lowerIsBetter: true },
+      { title: "Bytes per entry", footprint: "standard", lowerIsBetter: true },
+      { title: "Bytes per entry, compact object headers", footprint: "compact", lowerIsBetter: true },
     ] },
 ];
 
@@ -241,7 +243,8 @@ const UNITS = { "ns/op": "ns", "us/op": "µs", "ms/op": "ms", "ops/us": "M ops/s
 
 function estimate(chart, subject, size) {
   if (chart.footprint) {
-    const entry = DATA.footprint.find(f => f.subject === subject && f.size === size);
+    const entries = chart.footprint === "compact" ? (DATA.compactFootprint ?? []) : DATA.footprint;
+    const entry = entries.find(f => f.subject === subject && f.size === size);
     return entry ? { score: entry.bytesPerEntry, low: null, high: null, unit: "bytes" } : null;
   }
   const result = DATA.results.find(r => r.benchmark === benchmarkOf(chart) && r.subject === subject && r.size === size);

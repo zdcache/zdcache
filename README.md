@@ -340,7 +340,7 @@ Switch to `recency(Recency.APPROXIMATE)` when profiling shows many threads waiti
 
 ## Benchmark
 
-There are two sets of benchmarks. The configuration benchmarks run zdcache alone, in every identity store with and without indexes, with `Locking.SINGLE` and with one entry per id, measuring `get`, `put`, `put` inside `atomically` and searches. The library benchmarks compare zdcache's default configuration and approximate recency, each with and without indexes, against Caffeine, cache2k, Guava, Ehcache, a plain `ConcurrentHashMap`, embedded Hazelcast and CQEngine. Both measure single-threaded `get` and `put` and prefix, exact, compound and range searches at 1,000, 3,000, 5,000, 10,000 and 50,000 entries. Four threads reading and writing concurrently, and locking across four types, are measured at 10,000 and 50,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
+There are two sets of benchmarks. The configuration benchmarks run zdcache alone, in every identity store with and without indexes, with `Locking.SINGLE` and with one entry per put, measuring `get`, `put`, `put` inside `atomically` and searches. The library benchmarks compare zdcache's default configuration and approximate recency, each with and without indexes, against Caffeine, cache2k, Guava, Ehcache, a plain `ConcurrentHashMap`, embedded Hazelcast and CQEngine. Both measure single-threaded `get` and `put` and prefix, exact, compound and range searches at 1,000, 3,000, 5,000, 10,000 and 50,000 entries. Four threads reading and writing concurrently, and locking across four types, are measured at 10,000 and 50,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
 
 **[Open the full interactive report](https://zdcache.github.io/zdcache/benchmark/)** for every library and every zdcache configuration at every size, with confidence intervals and a table view.
 
@@ -442,6 +442,7 @@ None of the benchmarks put the caches under eviction pressure. Caffeine and cach
 | `LockingBenchmark.separateCallsAcrossTypes` | Calls per second, counted per group of three | 4 | 10,000 and 50,000 per type | The same read and two writes, without a block |
 | `LockingBenchmark.mixed` | Operations per second, reads and writes separately | 2 + 2 | 10,000 and 50,000 per type | Two threads read random types while two replace entries of their own type |
 | `MemoryFootprint` | Heap bytes per entry, measured with JOL | – | 1,000 to 50,000 | The cache filled with every person, not counting the person objects themselves |
+| `MemoryFootprint` with `-XX:+UseCompactObjectHeaders` | Heap bytes per entry with compact object headers | – | 1,000 to 50,000 | As above, on a JVM with the 8-byte object headers Java 25 offers but leaves off |
 
 Every entry is a `Person(id, name, city, age, tags)` with a six-letter random name, one of 50 cities, an age
 from 18 to 80 and up to three tags, generated from a fixed seed. `LockingBenchmark` instead uses four record
@@ -460,7 +461,7 @@ nothing is evicted.
 | Caffeine store | zdcache | Caffeine | Frequency-aware | None | Configuration, concurrent, memory |
 | Caffeine store, 4 indexes | zdcache | Caffeine | Frequency-aware | 4 | Configuration, memory |
 | `Locking.SINGLE`, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | Configuration, memory |
-| `Entries.PER_ID`, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | Configuration, memory |
+| `Entries.PER_PUT`, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | Configuration, memory |
 | Caffeine | Caffeine 3.2.4 | – | Frequency-aware | None; searches scan | Library, concurrent, memory |
 | cache2k | cache2k 2.6.1 | – | Clock-Pro | None; searches scan | Library, concurrent, memory |
 | Guava | Guava 33.7.2 | – | LRU per segment | None; searches scan | Library, concurrent, memory |
@@ -497,7 +498,7 @@ Only `LockingBenchmark` uses several types, so it is the only one where `Locking
 ./benchmark -publish               # publish the last full run
 ```
 
-Each plan file sets forks, warm-up and measurement per benchmark (`*.` for all, a benchmark name to override), can narrow a benchmark with `sizes` and `subjects`, and sets the memory-footprint sizes with `MemoryFootprint.sizes`. Each published value is the median of the per-fork averages, so one unlucky JVM does not decide a result. Results print to the terminal and are written to `build/reports/zdcache-benchmark/index.html`. The normal `./gradlew build` does not run the benchmark.
+Each plan file sets forks, warm-up and measurement per benchmark (`*.` for all, a benchmark name to override), can narrow a benchmark with `sizes` and `subjects`, and sets the memory-footprint sizes with `MemoryFootprint.sizes`. Each published value is the median of the per-fork averages, so one unlucky JVM does not decide a result. Results print to the terminal and are written to `build/reports/zdcache-benchmark/index.html`. The benchmark runs on a Java 25 JVM while the library stays compiled for Java 21; pass `-Pbenchmark.java=<version>` to use another, though the compact-header memory run needs Java 25 or later. The normal `./gradlew build` does not run the benchmark.
 
 Only a full run can be published. `./benchmark -publish` copies the report to `docs/benchmark/index.html`, which GitHub Pages serves, and refreshes the summary tables above; after a quick or custom run it refuses and asks for a full run.
 

@@ -17,6 +17,10 @@ java {
     }
 }
 
+val benchmarkJava = javaToolchains.launcherFor {
+    languageVersion = JavaLanguageVersion.of(providers.gradleProperty("benchmark.java").orElse("25").get())
+}
+
 tasks.withType<JavaCompile>().configureEach {
     options.release = 21
     options.encoding = "UTF-8"
@@ -64,6 +68,7 @@ tasks.register<JavaExec>("jmh") {
     description = "Runs the JMH benchmarks against Caffeine; pass JMH options with -Pjmh.args=\"...\"."
     group = "verification"
     classpath = jmh.runtimeClasspath
+    javaLauncher = benchmarkJava
     mainClass = "org.openjdk.jmh.Main"
     val results = layout.buildDirectory.file("reports/jmh/results.json")
     outputs.file(results)
@@ -75,20 +80,26 @@ tasks.register<JavaExec>("jmh") {
     doFirst { results.get().asFile.parentFile.mkdirs() }
 }
 
-tasks.register<JavaExec>("footprint") {
-    description = "Measures heap bytes per cached entry for Caffeine and ZDCache."
-    group = "verification"
-    classpath = jmh.runtimeClasspath
-    mainClass = "io.github.zdcache.bench.MemoryFootprint"
-    maxHeapSize = "4g"
-    jvmArgs("-Djdk.attach.allowAttachSelf=true", "-Djol.magicFieldOffset=true")
-    val report = layout.buildDirectory.file("reports/footprint/results.md")
-    outputs.file(report)
-    outputs.upToDateWhen { false }
-    val plan = benchmarkPlan.get()
-    inputs.file(plan)
-    argumentProviders.add(CommandLineArgumentProvider { listOf(report.get().asFile.absolutePath, plan.asFile.absolutePath) })
-}
+fun registerFootprint(name: String, directory: String, describedAs: String, vararg extraJvmArgs: String) =
+    tasks.register<JavaExec>(name) {
+        description = describedAs
+        group = "verification"
+        classpath = jmh.runtimeClasspath
+        mainClass = "io.github.zdcache.bench.MemoryFootprint"
+        javaLauncher = benchmarkJava
+        maxHeapSize = "4g"
+        jvmArgs("-Djdk.attach.allowAttachSelf=true", "-Djol.magicFieldOffset=true", *extraJvmArgs)
+        val report = layout.buildDirectory.file("reports/$directory/results.md")
+        outputs.file(report)
+        outputs.upToDateWhen { false }
+        val plan = benchmarkPlan.get()
+        inputs.file(plan)
+        argumentProviders.add(CommandLineArgumentProvider { listOf(report.get().asFile.absolutePath, plan.asFile.absolutePath) })
+    }
+
+registerFootprint("footprint", "footprint", "Measures heap bytes per cached entry for zdcache and the other libraries.")
+registerFootprint("footprintCompact", "footprint-compact",
+    "Measures heap bytes per cached entry with compact object headers.", "-XX:+UseCompactObjectHeaders")
 
 mavenPublishing {
     publishToMavenCentral()
@@ -125,6 +136,7 @@ tasks.register<JavaExec>("benchmarkPlan") {
     description = "Runs every JMH benchmark with src/jmh/resources/benchmark-<plan>.properties; choose -Pbenchmark.plan=full or quick."
     group = "verification"
     classpath = jmh.runtimeClasspath
+    javaLauncher = benchmarkJava
     mainClass = "io.github.zdcache.bench.BenchmarkRunner"
     val plan = benchmarkPlan.get()
     val results = layout.buildDirectory.file("reports/jmh/results.json")
@@ -141,16 +153,17 @@ tasks.register<JavaExec>("benchmarkReport") {
     group = "verification"
     classpath = sourceSets.test.get().runtimeClasspath
     mainClass = "io.github.zdcache.bench.BenchmarkReport"
-    mustRunAfter("jmh", "benchmarkPlan", "footprint")
+    mustRunAfter("jmh", "benchmarkPlan", "footprint", "footprintCompact")
     val jmhResults = layout.buildDirectory.file("reports/jmh/results.json")
     val footprintResults = layout.buildDirectory.file("reports/footprint/results.json")
+    val compactFootprintResults = layout.buildDirectory.file("reports/footprint-compact/results.json")
     val output = layout.buildDirectory.dir("reports/zdcache-benchmark")
     val mode = providers.gradleProperty("benchmark.mode").orElse("custom")
     outputs.dir(output)
     outputs.upToDateWhen { false }
     argumentProviders.add(CommandLineArgumentProvider {
         listOf(jmhResults.get().asFile.absolutePath, footprintResults.get().asFile.absolutePath, mode.get(),
-            output.get().asFile.absolutePath)
+            output.get().asFile.absolutePath, compactFootprintResults.get().asFile.absolutePath)
     })
 }
 
