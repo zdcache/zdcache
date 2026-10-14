@@ -138,6 +138,8 @@ const VIEWS = [
       { subject: "cache2k", label: "cache2k", scan: true },
       { subject: "guava", label: "Guava", scan: true },
       { subject: "cqengine", label: "CQEngine, 4 indexes" },
+      { subject: "zdcache-locking-per-type", label: "zdcache, PER_TYPE locking", highlight: true },
+      { subject: "zdcache-locking-single", label: "zdcache, SINGLE locking", highlight: true },
     ] },
   { key: "stores", name: "zdcache stores", highlightName: "Default store", otherName: "Other stores",
     subtitle: "zdcache with each of its identity stores: the default buffered LRU store, the LinkedHashMap store and "
@@ -152,6 +154,8 @@ const VIEWS = [
       { subject: "zdcache-lhm-indexed-lambda", label: "LinkedHashMap, 4 indexes, lambdas" },
       { subject: "zdcache-caffeine-keys", label: "Caffeine store" },
       { subject: "zdcache-caffeine-indexed", label: "Caffeine store, 4 indexes" },
+      { subject: "zdcache-locking-per-type", label: "PER_TYPE locking (default)", highlight: true },
+      { subject: "zdcache-locking-single", label: "SINGLE locking" },
     ] },
 ];
 
@@ -177,6 +181,17 @@ const PARTS = [
       { title: "Reads only", benchmark: "ConcurrentBenchmark.readOnly", lowerIsBetter: false },
       { title: "Mixed: reads", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedRead", lowerIsBetter: false },
       { title: "Mixed: writes", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedWrite", lowerIsBetter: false },
+    ] },
+  { title: "Locking across types", sized: false,
+    text: "Four types of 100,000 entries each, with indexes on name and city, in the default buffered store. Four threads "
+      + "write to their own type, or run blocks that read one type and write two; in mixed load six threads read random "
+      + "types while two write. Only the locking strategy differs.",
+    charts: [
+      { title: "Writes to separate types", benchmark: "LockingBenchmark.writesToSeparateTypes", lowerIsBetter: false },
+      { title: "atomically blocks across types", benchmark: "LockingBenchmark.atomicBlocksAcrossTypes", lowerIsBetter: false },
+      { title: "Same calls without a block", benchmark: "LockingBenchmark.separateCallsAcrossTypes", lowerIsBetter: false },
+      { title: "Mixed: reads", benchmark: "LockingBenchmark.mixed", metric: "mixedRead", lowerIsBetter: false },
+      { title: "Mixed: writes", benchmark: "LockingBenchmark.mixed", metric: "mixedWrite", lowerIsBetter: false },
     ] },
   { title: "Memory", sized: true,
     text: "Heap bytes per cached entry, measured with JOL, excluding the cached objects themselves.",

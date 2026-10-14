@@ -14,7 +14,9 @@ import java.util.Properties;
 import java.util.Set;
 
 public final class BenchmarkPlan {
-    public static final List<String> BENCHMARKS = List.of("KeyLookupBenchmark", "SearchBenchmark", "ConcurrentBenchmark");
+    public static final List<String> BENCHMARKS =
+        List.of("KeyLookupBenchmark", "SearchBenchmark", "ConcurrentBenchmark", "LockingBenchmark");
+    private static final String LOCKING = "LockingBenchmark";
     private static final String EVERY = "*";
     private static final String FOOTPRINT = "MemoryFootprint";
     private static final List<String> DEFAULT_FOOTPRINT_SIZES = List.of("10000", "100000");
@@ -69,6 +71,9 @@ public final class BenchmarkPlan {
             }
             if (!REQUIRED.contains(option) && !NARROWING.contains(option)) {
                 throw new IllegalArgumentException("Unknown option '" + option + "' in '" + key + "'");
+            }
+            if (scope.equals(LOCKING) && option.equals("subjects")) {
+                throw new IllegalArgumentException("'" + key + "' is not allowed: LockingBenchmark compares locking strategies, not subjects");
             }
             if (scope.equals(EVERY) && NARROWING.contains(option)) {
                 throw new IllegalArgumentException("'" + key + "' must name a benchmark, because sizes and subjects differ per benchmark");
