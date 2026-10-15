@@ -10,12 +10,12 @@ objects returned by reference.
 <dependency>
     <groupId>io.github.zdcache</groupId>
     <artifactId>zdcache</artifactId>
-    <version>0.2.0</version>
+    <version>0.3.0</version>
 </dependency>
 ```
 
 ```kotlin
-implementation("io.github.zdcache:zdcache:0.2.0")
+implementation("io.github.zdcache:zdcache:0.3.0")
 ```
 
 zdcache has no runtime dependencies, but the cache can use Caffeine under the hood if configured so.
