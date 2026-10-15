@@ -36,7 +36,7 @@ public final class ZDCache {
     private final Locking locking;
     private final Entries entries;
     private final ReentrantReadWriteLock sharedLock = new ReentrantReadWriteLock();
-    private final ThreadLocal<List<TypeCache<?, ?>>> exclusive = new ThreadLocal<>();
+    private volatile Thread atomicOwner;
 
     private ZDCache(Builder builder) {
         defaultMaxPerType = builder.defaultMaxPerType;
@@ -196,11 +196,7 @@ public final class ZDCache {
                 ordered.add(cache);
                 inTypeOrder = List.copyOf(ordered);
                 resolved.clear();
-                List<TypeCache<?, ?>> held = exclusive.get();
-                if (held != null) {
-                    cache.beginExclusive();
-                    held.add(cache);
-                }
+                if (atomicOwner == Thread.currentThread()) cache.beginExclusive();
             }
             return (TypeCache<T, ID>) cache;
         } finally { registry.unlock(); }
@@ -208,31 +204,48 @@ public final class ZDCache {
 
     public void atomically(Runnable work) {
         Objects.requireNonNull(work);
-        atomically(() -> {
+        if (atomicOwner == Thread.currentThread()) {
             work.run();
-            return null;
-        });
+            return;
+        }
+        beginAtomically();
+        try {
+            work.run();
+        } finally {
+            endAtomically();
+        }
     }
 
     public <R> R atomically(Supplier<R> work) {
         Objects.requireNonNull(work);
-        if (exclusive.get() != null) return work.get();
-        registry.lock();
+        if (atomicOwner == Thread.currentThread()) return work.get();
+        beginAtomically();
         try {
-            List<TypeCache<?, ?>> caches = inTypeOrder;
-            List<TypeCache<?, ?>> held = new ArrayList<>(caches.size() + 1);
-            try {
-                for (TypeCache<?, ?> cache : caches) {
-                    cache.beginExclusive();
-                    held.add(cache);
-                }
-                exclusive.set(held);
-                return work.get();
-            } finally {
-                exclusive.set(null);
-                for (int i = held.size() - 1; i >= 0; i--) held.get(i).endExclusive();
-            }
-        } finally { registry.unlock(); }
+            return work.get();
+        } finally {
+            endAtomically();
+        }
+    }
+
+    private void beginAtomically() {
+        registry.lock();
+        List<TypeCache<?, ?>> caches = inTypeOrder;
+        int locked = 0;
+        try {
+            for (; locked < caches.size(); locked++) caches.get(locked).beginExclusive();
+            atomicOwner = Thread.currentThread();
+        } catch (Throwable failure) {
+            while (locked > 0) caches.get(--locked).endExclusive();
+            registry.unlock();
+            throw failure;
+        }
+    }
+
+    private void endAtomically() {
+        atomicOwner = null;
+        List<TypeCache<?, ?>> caches = inTypeOrder;
+        for (int i = caches.size() - 1; i >= 0; i--) caches.get(i).endExclusive();
+        registry.unlock();
     }
 
     public <T, ID> void register(SearchSpecification<T, ID> specification) {
