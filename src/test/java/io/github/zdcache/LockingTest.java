@@ -1,6 +1,7 @@
 package io.github.zdcache;
 
 import java.util.ArrayList;
+import java.lang.management.ManagementFactory;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -8,6 +9,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -234,6 +236,41 @@ class LockingTest {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    @Test void blocksAllocateNothingPerCall() {
+        var cache = cache(Locking.PER_TYPE);
+        Runnable nothing = () -> { };
+        Supplier<String> constant = () -> "done";
+        var threads = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
+        for (int i = 0; i < 20_000; i++) {
+            cache.atomically(nothing);
+            cache.atomically(constant);
+        }
+        long before = threads.getCurrentThreadAllocatedBytes();
+        for (int i = 0; i < 100_000; i++) {
+            cache.atomically(nothing);
+            cache.atomically(constant);
+        }
+        long allocated = threads.getCurrentThreadAllocatedBytes() - before;
+        assertTrue(allocated < 100_000, allocated + " bytes for 200,000 blocks");
+    }
+
+    @Test void aBlockOnOneCacheCanOpenABlockOnAnother() throws Exception {
+        var first = cache(Locking.PER_TYPE);
+        var second = cache(Locking.PER_TYPE);
+        first.atomically(() -> {
+            first.put(new Customer(1, "Ada", 0));
+            second.atomically(() -> second.put(new Customer(2, "Bob", 0)));
+        });
+        Thread writer = new Thread(() -> {
+            first.put(new Order(1, 1));
+            second.put(new Order(2, 2));
+        });
+        writer.start();
+        writer.join(TimeUnit.SECONDS.toMillis(5));
+        assertFalse(writer.isAlive(), "a lock was left held");
+        assertNotNull(second.get(Customer.class, 2L));
     }
 
     @Test void anExceptionInsideABlockReleasesEveryLock() throws Exception {

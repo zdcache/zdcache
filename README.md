@@ -323,8 +323,9 @@ without indexes and 434 to 361 with four.
 
 Indexes matter more for performance than the store. Each one is updated on every `put`: four indexes take a
 `put` from 27–72 ns to 0.25–1.2 µs, depending on size, and memory from 123 to 434 bytes per entry, so declare
-only the dimensions you search on. A `put` inside its own `atomically` block costs 12–71 ns more up to 10,000
-entries; at 50,000 entries the cost varied between JIT compilations, from about 60 to over 500 ns. A compound index pays off for combinations you search often: at 50,000 entries an exact
+only the dimensions you search on. A `put` inside its own `atomically` block costs about 15 ns more and
+allocates nothing. That was measured after the published run below, whose `put in atomically` column still
+shows the cost from before blocks stopped allocating. A compound index pays off for combinations you search often: at 50,000 entries an exact
 city with an age range takes 1.1 µs as a compound, against 64 µs for the age range on its own, because the
 city narrows the matches first. Method references keep dimension names right when properties are renamed.
 
