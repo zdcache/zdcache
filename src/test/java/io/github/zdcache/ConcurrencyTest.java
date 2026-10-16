@@ -58,6 +58,16 @@ class ConcurrencyTest {
         hammer(ZDCache.builder().identityStore(IdentityStoreFactory.linkedHashMap()).entries(Entries.PER_ID));
     }
 
+    @Test void nonBlockingSearchesStayConsistentUnderConcurrentUseAndEviction() throws Exception {
+        for (Entries entries : Entries.values()) {
+            hammer(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).entries(entries).searches(Searches.NON_BLOCKING));
+            hammer(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).recency(Recency.APPROXIMATE)
+                .entries(entries).searches(Searches.NON_BLOCKING));
+            hammer(ZDCache.builder().identityStore(IdentityStoreFactory.caffeine()).entries(entries).searches(Searches.NON_BLOCKING));
+            hammer(ZDCache.builder().identityStore(IdentityStoreFactory.linkedHashMap()).entries(entries).searches(Searches.NON_BLOCKING));
+        }
+    }
+
     private static void hammer(ZDCache.Builder builder) throws Exception {
         var cache = builder.defaultMaxPerType(CAPACITY).build();
         cache.register(spec());

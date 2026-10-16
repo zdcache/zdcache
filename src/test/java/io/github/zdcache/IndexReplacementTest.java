@@ -20,11 +20,16 @@ class IndexReplacementTest {
 
     private static void forEachStore(Consumer<ZDCache> scenario) {
         for (Entries entries : Entries.values()) {
-            scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).entries(entries).build());
-            scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).recency(Recency.APPROXIMATE)
-                .entries(entries).build());
-            scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.linkedHashMap()).entries(entries).build());
-            scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.caffeine()).entries(entries).build());
+            for (Searches searches : Searches.values()) {
+                scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).entries(entries)
+                    .searches(searches).build());
+                scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.bufferedLru()).recency(Recency.APPROXIMATE)
+                    .entries(entries).searches(searches).build());
+                scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.linkedHashMap()).entries(entries)
+                    .searches(searches).build());
+                scenario.accept(ZDCache.builder().identityStore(IdentityStoreFactory.caffeine()).entries(entries)
+                    .searches(searches).build());
+            }
         }
     }
 

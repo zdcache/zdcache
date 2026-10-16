@@ -19,6 +19,7 @@ public final class MemoryFootprint {
     private static final List<String> INDEXED =
         List.of(Subjects.ZDCACHE_BUFFERED_INDEXED, Subjects.ZDCACHE_APPROXIMATE_INDEXED, Subjects.ZDCACHE_LHM_INDEXED,
             Subjects.ZDCACHE_CAFFEINE_INDEXED, Subjects.ZDCACHE_SINGLE_INDEXED, Subjects.ZDCACHE_PER_PUT_INDEXED,
+            Subjects.ZDCACHE_NON_BLOCKING_INDEXED,
             Subjects.CQENGINE);
 
     public static void main(String[] args) throws IOException {

@@ -21,7 +21,7 @@ class TypeCacheEntriesTest {
     private final IdentityStore<Long, Person> store = IdentityStoreFactory.bufferedLru().create(2);
 
     private TypeCache<Person, Long> cache(SearchSpecification<Person, Long> spec, boolean entryPerId) {
-        return new TypeCache<>(spec, store, new ReentrantReadWriteLock(), entryPerId);
+        return new TypeCache<>(spec, store, new ReentrantReadWriteLock(), entryPerId, false);
     }
 
     private static List<Long> ids(List<Person> people) {
