@@ -200,6 +200,14 @@ const PARTS = [
       { title: "Mixed: reads", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedRead", lowerIsBetter: false },
       { title: "Mixed: writes", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedWrite", lowerIsBetter: false },
     ] },
+  { title: "Concurrent search", sized: true,
+    text: "Four threads searching, or three searching while one writes and then pauses 100 µs. Searches rotate "
+      + "through the prefix, exact, compound and range queries.",
+    charts: [
+      { title: "Searches only", benchmark: "ConcurrentSearchBenchmark.searchOnly", lowerIsBetter: false },
+      { title: "With occasional writes: searches", benchmark: "ConcurrentSearchBenchmark.searchWithWrites", metric: "searches", lowerIsBetter: false },
+      { title: "With occasional writes: writes", benchmark: "ConcurrentSearchBenchmark.searchWithWrites", metric: "writes", lowerIsBetter: false },
+    ] },
   { title: "Locking across types", sized: true,
     text: "Four types of entries, with indexes on name and city, in the default buffered store. Four threads write to "
       + "their own type, or run blocks that read one type and write two; in mixed load two threads read random types "
@@ -239,7 +247,7 @@ let activeLayout = LAYOUTS[0];
 const scaling = () => activeLayout.key === "scaling";
 const openTables = new Set();
 
-const UNITS = { "ns/op": "ns", "us/op": "µs", "ms/op": "ms", "ops/us": "M ops/s", "bytes": "B" };
+const UNITS = { "ns/op": "ns", "us/op": "µs", "ms/op": "ms", "ops/us": "M ops/s", "ops/ms": "k ops/s", "bytes": "B" };
 
 function estimate(chart, subject, size) {
   if (chart.footprint) {

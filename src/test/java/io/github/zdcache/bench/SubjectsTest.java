@@ -109,6 +109,44 @@ class SubjectsTest {
         assertArrayEquals(Dataset.people(SIZE, 42), PEOPLE);
     }
 
+    @Test void searchableSubjectsKeepAnsweringWhileAnotherThreadWrites() throws Exception {
+        Person[] changed = Dataset.changed(PEOPLE, 99);
+        for (String name : Subjects.SEARCHABLE) {
+            CacheSubject subject = Subjects.create(name, SIZE);
+            try {
+                for (Person person : PEOPLE) subject.put(person);
+                var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+                var done = new java.util.concurrent.atomic.AtomicBoolean();
+                Thread writer = new Thread(() -> {
+                    try {
+                        for (int round = 0; round < 3; round++) {
+                            for (Person person : changed) subject.put(person);
+                            for (Person person : PEOPLE) subject.put(person);
+                        }
+                    } catch (Throwable e) {
+                        failure.set(e);
+                    } finally {
+                        done.set(true);
+                    }
+                });
+                writer.start();
+                while (!done.get() && failure.get() == null) {
+                    for (int q = 0; q < Queries.COUNT; q++) {
+                        for (Person person : subject.byCity(QUERIES.cities[q])) assertEquals(QUERIES.cities[q], person.city(), name);
+                        for (Person person : subject.byAge(QUERIES.ageFrom[q], QUERIES.ageTo[q])) {
+                            assertTrue(person.age() >= QUERIES.ageFrom[q] && person.age() <= QUERIES.ageTo[q], name);
+                        }
+                    }
+                }
+                writer.join();
+                assertNull(failure.get(), () -> name + ": " + failure.get());
+                assertEquals(ids(subject.byCity(QUERIES.cities[0])), ids(filled(Subjects.CAFFEINE).byCity(QUERIES.cities[0])), name);
+            } finally {
+                subject.close();
+            }
+        }
+    }
+
     @Test void keyOnlySubjectsCannotSearch() {
         assertThrows(io.github.zdcache.MissingSearchSpecificationStrategyException.class,
             () -> filled(Subjects.ZDCACHE_LHM_KEYS).byCity("city-01"));

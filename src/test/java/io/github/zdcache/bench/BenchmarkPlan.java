@@ -15,7 +15,7 @@ import java.util.Set;
 
 public final class BenchmarkPlan {
     public static final List<String> BENCHMARKS = List.of("ConfigurationBenchmark", "ConfigurationSearchBenchmark",
-        "LibraryBenchmark", "LibrarySearchBenchmark", "ConcurrentBenchmark", "LockingBenchmark");
+        "LibraryBenchmark", "LibrarySearchBenchmark", "ConcurrentBenchmark", "ConcurrentSearchBenchmark", "LockingBenchmark");
     private static final String LOCKING = "LockingBenchmark";
     private static final String EVERY = "*";
     private static final String FOOTPRINT = "MemoryFootprint";

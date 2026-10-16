@@ -345,7 +345,7 @@ Switch to `recency(Recency.APPROXIMATE)` when profiling shows many threads waiti
 
 ## Benchmark
 
-There are two sets of benchmarks. The configuration benchmarks run zdcache alone, in every identity store with and without indexes, with `Locking.SINGLE` and with one entry per put, measuring `get`, `put`, `put` inside `atomically` and searches. The library benchmarks compare zdcache's default configuration and approximate recency, each with and without indexes, against Caffeine, cache2k, Guava, Ehcache, a plain `ConcurrentHashMap`, embedded Hazelcast and CQEngine. Both measure single-threaded `get` and `put` and prefix, exact, compound and range searches at 1,000, 3,000, 5,000, 10,000 and 50,000 entries. Four threads reading and writing concurrently, and locking across four types, are measured at 10,000 and 50,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
+There are two sets of benchmarks. The configuration benchmarks run zdcache alone, in every identity store with and without indexes, with `Locking.SINGLE` and with one entry per put, measuring `get`, `put`, `put` inside `atomically` and searches. The library benchmarks compare zdcache's default configuration and approximate recency, each with and without indexes, against Caffeine, cache2k, Guava, Ehcache, a plain `ConcurrentHashMap`, embedded Hazelcast and CQEngine. Both measure single-threaded `get` and `put` and prefix, exact, compound and range searches at 1,000, 3,000, 5,000, 10,000 and 50,000 entries. Four threads reading and writing by key, four threads searching with and without occasional writes, and locking across four types, are measured at 10,000 and 50,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
 
 **[Open the full interactive report](https://zdcache.github.io/zdcache/benchmark/)** for every library and every zdcache configuration at every size, with confidence intervals and a table view.
 
@@ -442,6 +442,8 @@ None of the benchmarks put the caches under eviction pressure. Caffeine and cach
 | `ConfigurationSearchBenchmark.compoundCityAge`, `LibrarySearchBenchmark.compoundCityAge` | Average time per search | 1 | 1,000 to 50,000 | A city and a 10-year age window |
 | `ConcurrentBenchmark.readOnly` | Operations per second | 4 | 10,000 and 50,000 | Every thread reads random keys |
 | `ConcurrentBenchmark.mixed` | Operations per second, reads and writes separately | 3 + 1 | 10,000 and 50,000 | Three threads read while one replaces existing entries |
+| `ConcurrentSearchBenchmark.searchOnly` | Searches per second | 4 | 10,000 and 50,000 | Every thread runs the prefix, exact, compound and range queries in turn |
+| `ConcurrentSearchBenchmark.searchWithWrites` | Searches and writes per second, separately | 3 + 1 | 10,000 and 50,000 | Three threads search while one replaces an existing entry and then pauses 100 µs |
 | `LockingBenchmark.writesToSeparateTypes` | Operations per second | 4 | 10,000 and 50,000 per type | Four types; each thread replaces entries of its own type |
 | `LockingBenchmark.atomicBlocksAcrossTypes` | `atomically` blocks per second | 4 | 10,000 and 50,000 per type | Each block reads one type and replaces an entry in it and in the next type |
 | `LockingBenchmark.separateCallsAcrossTypes` | Calls per second, counted per group of three | 4 | 10,000 and 50,000 per type | The same read and two writes, without a block |
@@ -458,22 +460,22 @@ nothing is evicted.
 | Subject in the report | Library | Identity store | Recency | Indexes | Benchmarks |
 |---|---|---|---|---|---|
 | zdcache, Buffered LRU (default) | zdcache | Buffered LRU (default) | Strict | None | Configuration, library, concurrent, memory |
-| zdcache, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | All except locking |
+| zdcache, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | All except locking, including concurrent search |
 | zdcache, approximate recency | zdcache | Buffered LRU | Approximate | None | Configuration, library, concurrent, memory |
-| zdcache, approximate, 4 indexes | zdcache | Buffered LRU | Approximate | 4 | All except locking |
+| zdcache, approximate, 4 indexes | zdcache | Buffered LRU | Approximate | 4 | All except locking, including concurrent search |
 | LinkedHashMap store | zdcache | LinkedHashMap | Strict | None | Configuration, concurrent, memory |
-| LinkedHashMap store, 4 indexes | zdcache | LinkedHashMap | Strict | 4 | Configuration, memory |
+| LinkedHashMap store, 4 indexes | zdcache | LinkedHashMap | Strict | 4 | Configuration, concurrent search, memory |
 | Caffeine store | zdcache | Caffeine | Frequency-aware | None | Configuration, concurrent, memory |
-| Caffeine store, 4 indexes | zdcache | Caffeine | Frequency-aware | 4 | Configuration, memory |
-| `Locking.SINGLE`, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | Configuration, memory |
-| `Entries.PER_PUT`, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | Configuration, memory |
-| Caffeine | Caffeine 3.2.4 | – | Frequency-aware | None; searches scan | Library, concurrent, memory |
+| Caffeine store, 4 indexes | zdcache | Caffeine | Frequency-aware | 4 | Configuration, concurrent search, memory |
+| `Locking.SINGLE`, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | Configuration, concurrent search, memory |
+| `Entries.PER_PUT`, 4 indexes | zdcache | Buffered LRU (default) | Strict | 4 | Configuration, concurrent search, memory |
+| Caffeine | Caffeine 3.2.4 | – | Frequency-aware | None; searches scan | Library, concurrent, concurrent search, memory |
 | cache2k | cache2k 2.6.1 | – | Clock-Pro | None; searches scan | Library, concurrent, memory |
 | Guava | Guava 33.7.2 | – | LRU per segment | None; searches scan | Library, concurrent, memory |
 | Ehcache | Ehcache 3.12.0, heap tier | – | Sampled eviction | None; searches scan | Library, concurrent, memory |
 | ConcurrentHashMap | JDK | – | Never evicts | None; searches scan | Library, concurrent, memory |
-| Hazelcast, 3 indexes | Hazelcast 5.7.0, one embedded member | – | Never evicts | 3 | Library, concurrent |
-| CQEngine, 4 indexes | CQEngine 3.6.0 | – | Never evicts | 4 | Library, concurrent, memory |
+| Hazelcast, 3 indexes | Hazelcast 5.7.0, one embedded member | – | Never evicts | 3 | Library, concurrent, concurrent search |
+| CQEngine, 4 indexes | CQEngine 3.6.0 | – | Never evicts | 4 | Library, concurrent, concurrent search, memory |
 | zdcache, PER_TYPE locking | zdcache | Buffered LRU (default) | Strict | 2 per type | Locking |
 | zdcache, SINGLE locking | zdcache | Buffered LRU (default) | Strict | 2 per type | Locking |
 
