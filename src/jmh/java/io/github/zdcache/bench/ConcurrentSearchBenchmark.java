@@ -65,7 +65,7 @@ public class ConcurrentSearchBenchmark {
     }
 
     @Benchmark
-    @Threads(4)
+    @Threads(3)
     public List<Person> searchOnly(Cursor cursor) {
         return search(cursor);
     }

@@ -197,7 +197,7 @@ public final class BenchmarkReport {
                 .append(" |\n");
         }
 
-        out.append("\n**Concurrent search, 4 threads (thousand operations per second)**\n\n"
+        out.append("\n**Concurrent search, 3 searching threads (thousand operations per second)**\n\n"
             + "| | Searches only | With occasional writes: searches | With occasional writes: writes |\n|---|---:|---:|---:|\n");
         for (Row row : CONCURRENT_SEARCHERS) {
             Optional<Measurement> withWrites = primary(run, "ConcurrentSearchBenchmark.searchWithWrites", row.subject(), size);

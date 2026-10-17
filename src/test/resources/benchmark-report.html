@@ -202,8 +202,8 @@ const PARTS = [
       { title: "Mixed: writes", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedWrite", lowerIsBetter: false },
     ] },
   { title: "Concurrent search", sized: true,
-    text: "Four threads searching, or three searching while one writes and then pauses 100 µs. Searches rotate "
-      + "through the prefix, exact, compound and range queries.",
+    text: "Three threads searching, alone or while a fourth thread replaces an entry and then pauses 100 µs. "
+      + "Searches rotate through the prefix, exact, compound and range queries.",
     charts: [
       { title: "Searches only", benchmark: "ConcurrentSearchBenchmark.searchOnly", lowerIsBetter: false },
       { title: "With occasional writes: searches", benchmark: "ConcurrentSearchBenchmark.searchWithWrites", metric: "searches", lowerIsBetter: false },

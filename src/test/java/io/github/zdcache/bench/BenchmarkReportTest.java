@@ -208,7 +208,7 @@ class BenchmarkReportTest {
             """;
         String summary = BenchmarkReport.summary(BenchmarkReport.read(json, List.of(), "full", "t", 4));
 
-        assertTrue(summary.contains("**Concurrent search, 4 threads (thousand operations per second)**"));
+        assertTrue(summary.contains("**Concurrent search, 3 searching threads (thousand operations per second)**"));
         assertTrue(summary.contains("| zdcache, 4 indexes | 170 | 108 | 5.4 |"));
         assertTrue(summary.contains("| CQEngine, 4 indexes | – | – | – |"));
     }

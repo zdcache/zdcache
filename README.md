@@ -345,7 +345,7 @@ Switch to `recency(Recency.APPROXIMATE)` when profiling shows many threads waiti
 
 ## Benchmark
 
-There are two sets of benchmarks. The configuration benchmarks run zdcache alone, in every identity store with and without indexes, with `Locking.SINGLE` and with one entry per put, measuring `get`, `put`, `put` inside `atomically` and searches. The library benchmarks compare zdcache's default configuration and approximate recency, each with and without indexes, against Caffeine, cache2k, Guava, Ehcache, a plain `ConcurrentHashMap`, embedded Hazelcast and CQEngine. Both measure single-threaded `get` and `put` and prefix, exact, compound and range searches at 1,000, 3,000, 5,000, 10,000 and 50,000 entries. Four threads reading and writing by key, four threads searching with and without occasional writes, and locking across four types, are measured at 10,000 and 50,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
+There are two sets of benchmarks. The configuration benchmarks run zdcache alone, in every identity store with and without indexes, with `Locking.SINGLE` and with one entry per put, measuring `get`, `put`, `put` inside `atomically` and searches. The library benchmarks compare zdcache's default configuration and approximate recency, each with and without indexes, against Caffeine, cache2k, Guava, Ehcache, a plain `ConcurrentHashMap`, embedded Hazelcast and CQEngine. Both measure single-threaded `get` and `put` and prefix, exact, compound and range searches at 1,000, 3,000, 5,000, 10,000 and 50,000 entries. Four threads reading and writing by key, three threads searching with and without a fourth thread writing now and then, and locking across four types, are measured at 10,000 and 50,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
 
 **[Open the full interactive report](https://zdcache.github.io/zdcache/benchmark/)** for every library and every zdcache configuration at every size, with confidence intervals and a table view.
 
@@ -442,7 +442,7 @@ None of the benchmarks put the caches under eviction pressure. Caffeine and cach
 | `ConfigurationSearchBenchmark.compoundCityAge`, `LibrarySearchBenchmark.compoundCityAge` | Average time per search | 1 | 1,000 to 50,000 | A city and a 10-year age window |
 | `ConcurrentBenchmark.readOnly` | Operations per second | 4 | 10,000 and 50,000 | Every thread reads random keys |
 | `ConcurrentBenchmark.mixed` | Operations per second, reads and writes separately | 3 + 1 | 10,000 and 50,000 | Three threads read while one replaces existing entries |
-| `ConcurrentSearchBenchmark.searchOnly` | Searches per second | 4 | 10,000 and 50,000 | Every thread runs the prefix, exact, compound and range queries in turn |
+| `ConcurrentSearchBenchmark.searchOnly` | Searches per second | 3 | 10,000 and 50,000 | Every thread runs the prefix, exact, compound and range queries in turn |
 | `ConcurrentSearchBenchmark.searchWithWrites` | Searches and writes per second, separately | 3 + 1 | 10,000 and 50,000 | Three threads search while one replaces an existing entry and then pauses 100 µs |
 | `LockingBenchmark.writesToSeparateTypes` | Operations per second | 4 | 10,000 and 50,000 per type | Four types; each thread replaces entries of its own type |
 | `LockingBenchmark.atomicBlocksAcrossTypes` | `atomically` blocks per second | 4 | 10,000 and 50,000 per type | Each block reads one type and replaces an entry in it and in the next type |
