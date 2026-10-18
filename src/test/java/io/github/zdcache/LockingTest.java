@@ -119,6 +119,75 @@ class LockingTest {
         }
     }
 
+    @Test void searchesNeverSeeAnAtomicBlockHalfDone() throws Exception {
+        for (Setup locking : SETUPS) {
+            var cache = locking.cache();
+            cache.put(new Customer(1, "Ada", 1_000));
+            for (long id = 1; id <= 1_000; id++) cache.put(new Order(id, 1));
+            var done = new AtomicBoolean();
+            var violation = new AtomicReference<String>();
+
+            Thread reader = new Thread(() -> {
+                while (!done.get() && violation.get() == null) {
+                    long finishedBlocks = 1_000 - cache.search(Customer.class, "name", "Ada").getFirst().openOrders();
+                    boolean orderStillThere = cache.search(Order.class, "customerId", 1L).stream()
+                        .anyMatch(order -> order.id() == finishedBlocks);
+                    if (finishedBlocks > 0 && orderStillThere) {
+                        violation.set(locking + ": saw block " + finishedBlocks + " decrement the customer before removing its order");
+                    }
+                }
+            });
+            reader.start();
+            for (long id = 1; id <= 1_000; id++) {
+                long order = id;
+                cache.atomically(() -> {
+                    Customer customer = cache.get(Customer.class, 1L);
+                    cache.put(new Customer(1, "Ada", customer.openOrders() - 1));
+                    Thread.onSpinWait();
+                    cache.remove(Order.class, order);
+                });
+            }
+            done.set(true);
+            reader.join();
+
+            assertNull(violation.get(), violation::get);
+            assertEquals(0, cache.search(Customer.class, "name", "Ada").getFirst().openOrders());
+        }
+    }
+
+    @Test void oneSearchNeverSeesPartOfABlock() throws Exception {
+        for (Setup locking : SETUPS) {
+            var cache = locking.cache();
+            cache.put(new Customer(1, "Ada", 500));
+            cache.put(new Customer(2, "Adam", 500));
+            var done = new AtomicBoolean();
+            var violation = new AtomicReference<String>();
+            List<Thread> readers = new ArrayList<>();
+            for (int r = 0; r < 3; r++) {
+                Thread reader = new Thread(() -> {
+                    while (!done.get() && violation.get() == null) {
+                        List<Customer> both = cache.search(Customer.class, "name", "Ad");
+                        int total = both.stream().mapToInt(Customer::openOrders).sum();
+                        if (both.size() == 2 && total != 1_000) violation.set(locking + ": one search saw a total of " + total);
+                    }
+                });
+                reader.start();
+                readers.add(reader);
+            }
+            for (int i = 0; i < 5_000; i++) {
+                cache.atomically(() -> {
+                    Customer from = cache.get(Customer.class, 1L);
+                    Customer to = cache.get(Customer.class, 2L);
+                    cache.put(new Customer(1, "Ada", from.openOrders() - 1));
+                    cache.put(new Customer(2, "Adam", to.openOrders() + 1));
+                });
+            }
+            done.set(true);
+            for (Thread reader : readers) reader.join();
+            assertNull(violation.get(), violation::get);
+        }
+    }
+
     @Test void lockFreeReadsWaitForARunningBlock() throws Exception {
         for (Setup locking : SETUPS) {
             var cache = locking.cache();

@@ -72,6 +72,16 @@ public final class BenchmarkReport {
         new Row(Subjects.GUAVA, "Guava (full scan)"),
         new Row(Subjects.EHCACHE, "Ehcache (full scan)"),
         new Row(Subjects.CONCURRENT_HASH_MAP, "ConcurrentHashMap (full scan)"));
+    private static final List<Row> CONCURRENT_SEARCHERS = List.of(
+        new Row(Subjects.ZDCACHE_BUFFERED_INDEXED, "zdcache, 4 indexes"),
+        new Row(Subjects.ZDCACHE_APPROXIMATE_INDEXED, "zdcache, approximate, 4 indexes"),
+        new Row(Subjects.ZDCACHE_SINGLE_INDEXED, "zdcache, `Locking.SINGLE`, 4 indexes"),
+        new Row(Subjects.ZDCACHE_PER_PUT_INDEXED, "zdcache, `Entries.PER_PUT`, 4 indexes"),
+        new Row(Subjects.ZDCACHE_LHM_INDEXED, "zdcache, LinkedHashMap store, 4 indexes"),
+        new Row(Subjects.ZDCACHE_CAFFEINE_INDEXED, "zdcache, Caffeine store, 4 indexes"),
+        new Row(Subjects.HAZELCAST, "Hazelcast, 3 indexes"),
+        new Row(Subjects.CQENGINE, "CQEngine, 4 indexes"),
+        new Row(Subjects.CAFFEINE, "Caffeine (full scan)"));
     private static final List<String> QUERIES = List.of("prefixName", "exactCity", "compoundCityAge", "rangeAge");
 
     private static final List<Row> LOCKINGS = List.of(
@@ -182,6 +192,17 @@ public final class BenchmarkReport {
                 .append(" | ").append(cell(primary(run, "ConcurrentBenchmark.readOnly", row.subject(), size).map(Measurement::primary), BenchmarkReport::throughput))
                 .append(" | ").append(cell(secondary(run, "mixedRead", row.subject()), BenchmarkReport::throughput))
                 .append(" | ").append(cell(secondary(run, "mixedWrite", row.subject()), BenchmarkReport::throughput))
+                .append(" |\n");
+        }
+
+        out.append("\n**Concurrent search, 3 searching threads (thousand operations per second)**\n\n"
+            + "| | Searches only | With occasional writes: searches | With occasional writes: writes |\n|---|---:|---:|---:|\n");
+        for (Row row : CONCURRENT_SEARCHERS) {
+            Optional<Measurement> withWrites = primary(run, "ConcurrentSearchBenchmark.searchWithWrites", row.subject(), size);
+            out.append("| ").append(row.label())
+                .append(" | ").append(cell(primary(run, "ConcurrentSearchBenchmark.searchOnly", row.subject(), size).map(Measurement::primary), BenchmarkReport::throughput))
+                .append(" | ").append(cell(withWrites.map(m -> m.secondary().get("searches")), BenchmarkReport::throughput))
+                .append(" | ").append(cell(withWrites.map(m -> m.secondary().get("writes")), BenchmarkReport::throughput))
                 .append(" |\n");
         }
 

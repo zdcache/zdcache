@@ -83,7 +83,7 @@ class BenchmarkReportTest {
         assertTrue(summary.contains("| Caffeine | – | 56 | 0.55 |"));
         assertTrue(summary.contains("| CQEngine, 4 indexes | 19 µs | – | – | – |"));
         assertTrue(summary.contains("| CQEngine, 4 indexes | – | – | – |"));
-        assertEquals(5, summary.split("\\|---\\|").length - 1);
+        assertEquals(6, summary.split("\\|---\\|").length - 1);
     }
 
     @Test void numbersKeepTwoSignificantDigitsBelowTen() {
@@ -192,5 +192,24 @@ class BenchmarkReportTest {
 
     @Test void aRunWithoutCompactHeaderMemoryShowsNoFigure() {
         assertTrue(BenchmarkReport.summary(run()).contains("| zdcache | 28 ns | 1,489 ns | 123 B | – |"));
+    }
+
+    @Test void concurrentSearchesAndOccasionalWritesAreSummarised() {
+        String json = """
+            [
+              {"benchmark": "io.github.zdcache.bench.ConcurrentSearchBenchmark.searchOnly", "jdkVersion": "25", "forks": 3,
+               "params": {"size": "50000", "subject": "zdcache-buffered-indexed"},
+               "primaryMetric": {"score": 170, "scoreUnit": "ops/ms", "rawData": [[170.0]]}, "secondaryMetrics": {}},
+              {"benchmark": "io.github.zdcache.bench.ConcurrentSearchBenchmark.searchWithWrites", "jdkVersion": "25", "forks": 3,
+               "params": {"size": "50000", "subject": "zdcache-buffered-indexed"},
+               "primaryMetric": {"score": 113, "scoreUnit": "ops/ms", "rawData": [[113.0]]},
+               "secondaryMetrics": {"searches": {"score": 108, "rawData": [[108.0]]}, "writes": {"score": 5.4, "rawData": [[5.4]]}}}
+            ]
+            """;
+        String summary = BenchmarkReport.summary(BenchmarkReport.read(json, List.of(), "full", "t", 4));
+
+        assertTrue(summary.contains("**Concurrent search, 3 searching threads (thousand operations per second)**"));
+        assertTrue(summary.contains("| zdcache, 4 indexes | 170 | 108 | 5.4 |"));
+        assertTrue(summary.contains("| CQEngine, 4 indexes | – | – | – |"));
     }
 }
