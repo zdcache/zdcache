@@ -61,8 +61,7 @@ public final class BenchmarkReport {
         new Row(Subjects.ZDCACHE_CAFFEINE_KEYS, "Caffeine store"),
         new Row(Subjects.ZDCACHE_CAFFEINE_INDEXED, "Caffeine store, 4 indexes"),
         new Row(Subjects.ZDCACHE_SINGLE_INDEXED, "`Locking.SINGLE`, 4 indexes"),
-        new Row(Subjects.ZDCACHE_PER_PUT_INDEXED, "`Entries.PER_PUT`, 4 indexes"),
-        new Row(Subjects.ZDCACHE_NON_BLOCKING_INDEXED, "`Searches.NON_BLOCKING`, 4 indexes"));
+        new Row(Subjects.ZDCACHE_PER_PUT_INDEXED, "`Entries.PER_PUT`, 4 indexes"));
     private static final List<Row> SEARCHERS = List.of(
         new Row(Subjects.ZDCACHE_BUFFERED_INDEXED, "zdcache, 4 indexes"),
         new Row(Subjects.ZDCACHE_APPROXIMATE_INDEXED, "zdcache, approximate, 4 indexes"),
@@ -75,7 +74,6 @@ public final class BenchmarkReport {
         new Row(Subjects.CONCURRENT_HASH_MAP, "ConcurrentHashMap (full scan)"));
     private static final List<Row> CONCURRENT_SEARCHERS = List.of(
         new Row(Subjects.ZDCACHE_BUFFERED_INDEXED, "zdcache, 4 indexes"),
-        new Row(Subjects.ZDCACHE_NON_BLOCKING_INDEXED, "zdcache, `Searches.NON_BLOCKING`, 4 indexes"),
         new Row(Subjects.ZDCACHE_APPROXIMATE_INDEXED, "zdcache, approximate, 4 indexes"),
         new Row(Subjects.ZDCACHE_SINGLE_INDEXED, "zdcache, `Locking.SINGLE`, 4 indexes"),
         new Row(Subjects.ZDCACHE_PER_PUT_INDEXED, "zdcache, `Entries.PER_PUT`, 4 indexes"),

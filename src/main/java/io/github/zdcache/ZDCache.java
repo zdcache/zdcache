@@ -35,7 +35,6 @@ public final class ZDCache {
     private final Recency recency;
     private final Locking locking;
     private final Entries entries;
-    private final Searches searches;
     private final ReentrantReadWriteLock sharedLock = new ReentrantReadWriteLock();
     private volatile Thread atomicOwner;
 
@@ -46,7 +45,6 @@ public final class ZDCache {
         recency = builder.recency;
         locking = builder.locking;
         entries = builder.entries;
-        searches = builder.searches;
     }
 
     public static Builder builder() { return new Builder(); }
@@ -58,7 +56,6 @@ public final class ZDCache {
         private Recency recency;
         private Locking locking = Locking.PER_TYPE;
         private Entries entries = Entries.PER_ID;
-        private Searches searches = Searches.BLOCKING;
 
         public Builder defaultMaxPerType(int maximum) {
             positive(maximum);
@@ -88,11 +85,6 @@ public final class ZDCache {
 
         public Builder entries(Entries entries) {
             this.entries = Objects.requireNonNull(entries);
-            return this;
-        }
-
-        public Builder searches(Searches searches) {
-            this.searches = Objects.requireNonNull(searches);
             return this;
         }
 
@@ -198,8 +190,7 @@ public final class ZDCache {
                 int capacity = capacities.getOrDefault(type, defaultMaxPerType);
                 cache = new TypeCache<>(specification,
                     recency == null ? stores.create(capacity) : stores.create(capacity, recency),
-                    locking == Locking.SINGLE ? sharedLock : new ReentrantReadWriteLock(), entries == Entries.PER_ID,
-                    searches == Searches.NON_BLOCKING);
+                    locking == Locking.SINGLE ? sharedLock : new ReentrantReadWriteLock(), entries == Entries.PER_ID);
                 types.put(type, cache);
                 List<TypeCache<?, ?>> ordered = new ArrayList<>(inTypeOrder);
                 ordered.add(cache);

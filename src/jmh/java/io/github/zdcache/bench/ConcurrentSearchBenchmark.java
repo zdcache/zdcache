@@ -18,8 +18,8 @@ public class ConcurrentSearchBenchmark {
     @Param({"1000", "3000", "5000", "10000", "50000"})
     int size;
 
-    @Param({Subjects.ZDCACHE_BUFFERED_INDEXED, Subjects.ZDCACHE_NON_BLOCKING_INDEXED, Subjects.ZDCACHE_APPROXIMATE_INDEXED,
-            Subjects.ZDCACHE_SINGLE_INDEXED, Subjects.ZDCACHE_PER_PUT_INDEXED, Subjects.ZDCACHE_LHM_INDEXED, Subjects.ZDCACHE_CAFFEINE_INDEXED,
+    @Param({Subjects.ZDCACHE_BUFFERED_INDEXED, Subjects.ZDCACHE_APPROXIMATE_INDEXED, Subjects.ZDCACHE_SINGLE_INDEXED,
+            Subjects.ZDCACHE_PER_PUT_INDEXED, Subjects.ZDCACHE_LHM_INDEXED, Subjects.ZDCACHE_CAFFEINE_INDEXED,
             Subjects.CQENGINE, Subjects.HAZELCAST, Subjects.CAFFEINE})
     String subject;
 

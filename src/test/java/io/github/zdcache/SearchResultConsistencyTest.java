@@ -20,12 +20,9 @@ class SearchResultConsistencyTest {
         for (var stores : List.of(IdentityStoreFactory.bufferedLru(), IdentityStoreFactory.linkedHashMap(),
                 IdentityStoreFactory.caffeine())) {
             for (Entries entries : Entries.values()) {
-                for (Searches searches : Searches.values()) {
-                    var cache = ZDCache.builder().defaultMaxPerType(capacity).identityStore(stores).entries(entries)
-                        .searches(searches).build();
-                    cache.register(SPEC);
-                    scenario.accept(cache);
-                }
+                var cache = ZDCache.builder().defaultMaxPerType(capacity).identityStore(stores).entries(entries).build();
+                cache.register(SPEC);
+                scenario.accept(cache);
             }
         }
     }

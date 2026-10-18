@@ -13,7 +13,7 @@ public class ConfigurationBenchmark extends KeyLookupBase {
     @Param({Subjects.ZDCACHE_BUFFERED_KEYS, Subjects.ZDCACHE_BUFFERED_INDEXED, Subjects.ZDCACHE_APPROXIMATE_KEYS,
             Subjects.ZDCACHE_APPROXIMATE_INDEXED, Subjects.ZDCACHE_LHM_KEYS, Subjects.ZDCACHE_LHM_INDEXED,
             Subjects.ZDCACHE_CAFFEINE_KEYS, Subjects.ZDCACHE_CAFFEINE_INDEXED, Subjects.ZDCACHE_SINGLE_INDEXED,
-            Subjects.ZDCACHE_PER_PUT_INDEXED, Subjects.ZDCACHE_NON_BLOCKING_INDEXED})
+            Subjects.ZDCACHE_PER_PUT_INDEXED})
     String subject;
 
     @Override String subject() { return subject; }

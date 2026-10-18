@@ -21,22 +21,21 @@ class LockingTest {
     static final IdentityDimension<Customer, Long> CUSTOMER_ID = IdentityDimension.of(Customer.class, "id", Customer::id);
     static final IdentityDimension<Order, Long> ORDER_ID = IdentityDimension.of(Order.class, "id", Order::id);
 
-    private record Setup(Locking locking, Entries entries, Searches searches) {
-        ZDCache cache() { return LockingTest.cache(locking, entries, searches); }
-        @Override public String toString() { return locking + "/" + entries + "/" + searches; }
+    private record Setup(Locking locking, Entries entries) {
+        ZDCache cache() { return LockingTest.cache(locking, entries); }
+        @Override public String toString() { return locking + "/" + entries; }
     }
 
-    private static final List<Setup> SETUPS = java.util.Arrays.stream(Locking.values())
-        .flatMap(locking -> java.util.Arrays.stream(Entries.values())
-            .flatMap(entries -> java.util.Arrays.stream(Searches.values()).map(searches -> new Setup(locking, entries, searches))))
-        .toList();
+    private static final List<Setup> SETUPS = List.of(
+        new Setup(Locking.PER_TYPE, Entries.PER_PUT), new Setup(Locking.SINGLE, Entries.PER_PUT),
+        new Setup(Locking.PER_TYPE, Entries.PER_ID), new Setup(Locking.SINGLE, Entries.PER_ID));
 
     private static ZDCache cache(Locking locking) {
-        return cache(locking, Entries.PER_PUT, Searches.BLOCKING);
+        return cache(locking, Entries.PER_PUT);
     }
 
-    private static ZDCache cache(Locking locking, Entries entries, Searches searches) {
-        var cache = ZDCache.builder().locking(locking).entries(entries).searches(searches).build();
+    private static ZDCache cache(Locking locking, Entries entries) {
+        var cache = ZDCache.builder().locking(locking).entries(entries).build();
         cache.register(SearchSpecification.builder(CUSTOMER_ID).prefix(Customer::name).build());
         cache.register(SearchSpecification.builder(ORDER_ID).exact(Order::customerId).build());
         return cache;
@@ -117,108 +116,6 @@ class LockingTest {
 
             assertNull(violation.get(), violation::get);
             assertEquals(0, cache.get(Customer.class, 1L).openOrders());
-        }
-    }
-
-    @Test void searchesNeverSeeAnAtomicBlockHalfDone() throws Exception {
-        for (Setup locking : SETUPS) {
-            var cache = locking.cache();
-            cache.put(new Customer(1, "Ada", 1_000));
-            for (long id = 1; id <= 1_000; id++) cache.put(new Order(id, 1));
-            var done = new AtomicBoolean();
-            var violation = new AtomicReference<String>();
-
-            Thread reader = new Thread(() -> {
-                while (!done.get() && violation.get() == null) {
-                    long finishedBlocks = 1_000 - cache.search(Customer.class, "name", "Ada").getFirst().openOrders();
-                    boolean orderStillThere = cache.search(Order.class, "customerId", 1L).stream()
-                        .anyMatch(order -> order.id() == finishedBlocks);
-                    if (finishedBlocks > 0 && orderStillThere) {
-                        violation.set(locking + ": saw block " + finishedBlocks + " decrement the customer before removing its order");
-                    }
-                }
-            });
-            reader.start();
-            for (long id = 1; id <= 1_000; id++) {
-                long order = id;
-                cache.atomically(() -> {
-                    Customer customer = cache.get(Customer.class, 1L);
-                    cache.put(new Customer(1, "Ada", customer.openOrders() - 1));
-                    Thread.onSpinWait();
-                    cache.remove(Order.class, order);
-                });
-            }
-            done.set(true);
-            reader.join();
-
-            assertNull(violation.get(), violation::get);
-            assertEquals(0, cache.search(Customer.class, "name", "Ada").getFirst().openOrders());
-        }
-    }
-
-    @Test void oneSearchNeverSeesPartOfABlock() throws Exception {
-        for (Setup locking : SETUPS) {
-            var cache = locking.cache();
-            cache.put(new Customer(1, "Ada", 500));
-            cache.put(new Customer(2, "Adam", 500));
-            var done = new AtomicBoolean();
-            var violation = new AtomicReference<String>();
-            List<Thread> readers = new java.util.ArrayList<>();
-            for (int r = 0; r < 3; r++) {
-                Thread reader = new Thread(() -> {
-                    while (!done.get() && violation.get() == null) {
-                        List<Customer> both = cache.search(Customer.class, "name", "Ad");
-                        int total = both.stream().mapToInt(Customer::openOrders).sum();
-                        if (both.size() == 2 && total != 1_000) violation.set(locking + ": one search saw a total of " + total);
-                    }
-                });
-                reader.start();
-                readers.add(reader);
-            }
-            for (int i = 0; i < 5_000; i++) {
-                cache.atomically(() -> {
-                    Customer from = cache.get(Customer.class, 1L);
-                    Customer to = cache.get(Customer.class, 2L);
-                    cache.put(new Customer(1, "Ada", from.openOrders() - 1));
-                    cache.put(new Customer(2, "Adam", to.openOrders() + 1));
-                });
-            }
-            done.set(true);
-            for (Thread reader : readers) reader.join();
-            assertNull(violation.get(), violation::get);
-        }
-    }
-
-    @Test void nonBlockingSearchesDoNotWaitForAWriterHoldingTheTypeLock() throws Exception {
-        for (Searches searches : Searches.values()) {
-            var entered = new CountDownLatch(1);
-            var release = new CountDownLatch(1);
-            var slowSpec = SearchSpecification.builder(CUSTOMER_ID)
-                .prefix("name", customer -> {
-                    if (customer.openOrders() == 99) {
-                        entered.countDown();
-                        awaitUninterruptibly(release);
-                    }
-                    return customer.name();
-                })
-                .build();
-            var cache = ZDCache.builder().searches(searches).build();
-            cache.put(new Customer(1, "Ada", 0), slowSpec);
-            Thread writer = new Thread(() -> cache.put(new Customer(2, "Bob", 99)));
-            writer.start();
-            assertTrue(entered.await(5, TimeUnit.SECONDS));
-
-            var found = new AtomicReference<List<Customer>>();
-            Thread search = new Thread(() -> found.set(cache.search(Customer.class, "name", "Ada")));
-            search.start();
-            search.join(500);
-            boolean finished = !search.isAlive();
-            release.countDown();
-            writer.join();
-            search.join();
-
-            assertEquals(searches == Searches.NON_BLOCKING, finished, searches + ": search finished while the writer held the lock");
-            assertEquals(List.of(new Customer(1, "Ada", 0)), found.get());
         }
     }
 

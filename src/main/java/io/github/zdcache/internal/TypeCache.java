@@ -26,21 +26,19 @@ public final class TypeCache<T, ID> {
     private final IdentityStore<ID, T> store;
     private final Class<T> type;
     private final boolean entryPerId;
-    private final boolean nonBlockingSearches;
     private volatile long version;
     private volatile SearchSpecification<T, ID> specification;
-    private volatile SearchIndexes<T, ID> indexes;
+    private volatile DimensionRegistry<T, ID> indexes;
 
     public TypeCache(SearchSpecification<T, ID> spec, IdentityStore<ID, T> store, ReentrantReadWriteLock lock,
-                     boolean entryPerId, boolean nonBlockingSearches) {
+                     boolean entryPerId) {
         this.entryPerId = entryPerId;
-        this.nonBlockingSearches = nonBlockingSearches;
         this.read = lock.readLock();
         this.write = lock.writeLock();
         this.specification = Objects.requireNonNull(spec);
         this.type = spec.type();
         this.store = Objects.requireNonNull(store);
-        this.indexes = new SearchIndexes<>(spec, nonBlockingSearches);
+        this.indexes = new DimensionRegistry<>(spec);
     }
 
     public SearchSpecification<T, ID> specification() {
@@ -68,14 +66,6 @@ public final class TypeCache<T, ID> {
         try {
             store(id, entity, suppliedOrNull);
         } finally {
-            publishAndUnlock();
-        }
-    }
-
-    private void publishAndUnlock() {
-        try {
-            indexes.publish();
-        } finally {
             write.unlock();
         }
     }
@@ -90,17 +80,15 @@ public final class TypeCache<T, ID> {
             throw new IllegalArgumentException("Supplied ID differs from the immutable IdentityDimension");
         }
         // Preparation MUST happen before touching existing state; an extractor failure is safe.
-        boolean searchable = specification.searchable();
-        Object[] next = indexes.current().extract(entity);
-        indexes.current().validate(next);
+        Object[] next = indexes.extract(entity);
+        indexes.validate(next);
         applyEvictions();
 
-        if (entryPerId && searchable && updateInPlace(id, entity, next)) return;
+        if (entryPerId && specification.searchable() && updateInPlace(id, entity, next)) return;
         IndexedEntry<T> entry = new IndexedEntry<>(entity, next);
         IndexedEntry<T> previous = store.put(id, entry);
         applyEvictions();
         boolean kept = store.contains(id);
-        if (!searchable) return;
         if (previous != null && kept) {
             indexes.replace(previous, previous.snapshot(), entry, next);
         } else {
@@ -112,7 +100,8 @@ public final class TypeCache<T, ID> {
     private boolean updateInPlace(ID id, T entity, Object[] next) {
         IndexedEntry<T> current = store.peek(id);
         if (current == null || current.evicted()) return false;
-        indexes.update(current, entity, next);
+        indexes.replace(current, current.snapshot(), current, next);
+        current.update(entity, next);
         IndexedEntry<T> previous = store.put(id, current);
         if (previous != null && previous != current) indexes.remove(previous, previous.snapshot());
         applyEvictions();
@@ -187,7 +176,7 @@ public final class TypeCache<T, ID> {
         try {
             if (view.isAssignableFrom(specification.type())) {
                 store.clear();
-                indexes = new SearchIndexes<>(specification, nonBlockingSearches);
+                indexes = new DimensionRegistry<>(specification);
                 return;
             }
             applyEvictions();
@@ -197,7 +186,7 @@ public final class TypeCache<T, ID> {
                     indexes.remove(pair.getValue(), pair.getValue().snapshot());
                 }
             }
-        } finally { publishAndUnlock(); }
+        } finally { write.unlock(); }
     }
 
     public ID mostRecentlyAccessed(Class<?> view) {
@@ -214,7 +203,7 @@ public final class TypeCache<T, ID> {
             store.settle();
             applyEvictions();
             return query.get();
-        } finally { publishAndUnlock(); }
+        } finally { write.unlock(); }
     }
 
     public T remove(ID id, Class<?> view) {
@@ -227,44 +216,26 @@ public final class TypeCache<T, ID> {
             if (entry != null) indexes.remove(entry, entry.snapshot());
             applyEvictions();
             return entry == null ? null : entry.entity();
-        } finally { publishAndUnlock(); }
+        } finally { write.unlock(); }
     }
 
     public <S> List<S> search(Class<S> view, String dimension, Object... values) {
-        if (nonBlockingSearches) {
-            long before = version;
-            if ((before & 1) == 0) {
-                requireSearchable();
-                SearchIndexes<T, ID> current = indexes;
-                List<S> found = current.read((copy, side) -> collect(current, copy, side, view, dimension, values));
-                if (version == before) return found;
-            }
-        }
         read.lock();
         try {
-            requireSearchable();
-            SearchIndexes<T, ID> current = indexes;
-            return collect(current, current.current(), current.activeSide(), view, dimension, values);
+            if (!specification.searchable()) {
+                throw new MissingSearchSpecificationStrategyException(specification.type());
+            }
+            DimensionRegistry<T, ID> registry = indexes;
+            Set<IndexedEntry<T>> seen = registry.multiValued(dimension)
+                ? Collections.newSetFromMap(new IdentityHashMap<>()) : null;
+            List<S> found = new ArrayList<>();
+            registry.forEachMatch(dimension, values, entry -> {
+                if (entry.evicted() || seen != null && !seen.add(entry)) return;
+                T entity = entry.entity();
+                if (view.isInstance(entity)) found.add(view.cast(entity));
+            });
+            return Collections.unmodifiableList(found);
         } finally { read.unlock(); }
-    }
-
-    private void requireSearchable() {
-        if (!specification.searchable()) {
-            throw new MissingSearchSpecificationStrategyException(specification.type());
-        }
-    }
-
-    private <S> List<S> collect(SearchIndexes<T, ID> copies, DimensionRegistry<T, ID> registry, int side, Class<S> view,
-                                String dimension, Object[] values) {
-        Set<IndexedEntry<T>> seen = registry.multiValued(dimension)
-            ? Collections.newSetFromMap(new IdentityHashMap<>()) : null;
-        List<S> found = new ArrayList<>();
-        registry.forEachMatch(dimension, values, entry -> {
-            if (entry.evicted() || seen != null && !seen.add(entry)) return;
-            T entity = copies.entity(entry, side);
-            if (view.isInstance(entity)) found.add(view.cast(entity));
-        });
-        return Collections.unmodifiableList(found);
     }
 
     /** Rebuild all dimensions atomically. Never replace the registered identity instance. */
@@ -277,7 +248,6 @@ public final class TypeCache<T, ID> {
             store.settle();
             applyEvictions();
             DimensionRegistry<T, ID> rebuilt = new DimensionRegistry<>(nextSpecification);
-            DimensionRegistry<T, ID> copy = nonBlockingSearches ? new DimensionRegistry<>(nextSpecification) : null;
             Map<ID, Object[]> snapshots = new HashMap<>();
             Map<ID, IndexedEntry<T>> entries = store.snapshot();
             for (var pair : entries.entrySet()) {
@@ -288,8 +258,7 @@ public final class TypeCache<T, ID> {
             }
             // All potentially throwing extraction/indexing has succeeded; publish under type lock.
             entries.forEach((id, entry) -> entry.replaceSnapshot(snapshots.get(id)));
-            if (copy != null) entries.forEach((id, entry) -> copy.add(entry, snapshots.get(id)));
-            indexes = new SearchIndexes<>(rebuilt, copy);
+            indexes = rebuilt;
             specification = nextSpecification;
         } finally { write.unlock(); }
     }
@@ -300,14 +269,10 @@ public final class TypeCache<T, ID> {
             store.settle();
             applyEvictions();
             return store.size();
-        } finally { publishAndUnlock(); }
+        } finally { write.unlock(); }
     }
 
     private void applyEvictions() {
-        if (!specification.searchable()) {
-            store.drainEvictions();
-            return;
-        }
         for (var evicted : store.drainEvictions()) {
             indexes.remove(evicted.entry(), evicted.entry().snapshot());
         }
