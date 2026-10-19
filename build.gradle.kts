@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "io.github.zdcache"
-version = "0.3.1-SNAPSHOT"
+version = "0.3.1"
 description = "ZDCache: an in-process, multi-type cache searchable along specification-defined dimensions."
 
 repositories {
