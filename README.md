@@ -1,8 +1,84 @@
-# ZDCache — Searchable Dimensions Cache (Java 21, Gradle)
+**[Read this on the ZDCache site](https://zdcache.github.io/zdcache/)**, where the documentation is split into pages and the benchmark report has interactive charts.
 
-An in-process, multi-type, per-type-bounded object cache with specification-driven searchable dimensions 
-and secondary indexes. Cache writes are explicitly submitted; the cache does **not** track mutations to 
-objects returned by reference.
+# ZDCache
+
+Search cached Java objects without scanning the cache.
+
+ZDCache is an in-process Java cache that combines lookups by key with indexed searches over the objects' properties: exact values, case-insensitive prefixes, numeric ranges, combinations of these, and values inside nested collections. Each cached type has its own capacity and LRU eviction, and its indexes follow every entry that is put, replaced, removed or evicted.
+
+## Why ZDCache?
+
+- **Search by more than the key.** Declare the properties you search with method references, then search them by exact value, prefix, range or a compound of these. A search reads an index instead of every entry.
+- **Search inside nested collections.** Index the properties of objects in nested lists, such as the cities of a person's addresses, without keeping lookup maps of your own.
+- **Indexes follow the writes.** Putting, replacing, removing or evicting an entry updates its index entries.
+- **Several types in one cache.** Each class has its own capacity, specification, indexes and, by default, its own lock, so writes to one type do not wait for another.
+- **Calls across types as one step.** `atomically(...)` runs several calls so that no other thread sees the state in between. It is not a transaction and does not roll back.
+- **Nothing to run beside your application.** ZDCache runs in-process on Java 21 or newer, with no required runtime dependencies. A search needs no network call, service or database.
+
+## Quick start
+
+Add the dependency from [Installation](#installation), declare what to search, put objects and search them:
+
+```java
+import io.github.zdcache.*;
+import java.util.List;
+
+record Person(long id, String name, String city, int age) {}
+
+var cache = ZDCache.builder()
+    .capacity(Person.class, 10_000)
+    .build();
+
+var spec = SearchSpecification.builder(IdentityDimension.of(Person.class, "id", Person::id))
+    .prefix(Person::name)
+    .exact(Person::city)
+    .range(Person::age)
+    .build();
+
+cache.put(new Person(1, "Simon", "Oslo", 32), spec);    // the first put of a type registers its specification
+cache.put(new Person(2, "Simone", "Bergen", 25));
+
+List<Person> named = cache.search(Person::name, "sim");    // both people: prefixes ignore case
+List<Person> inOslo = cache.search(Person::city, "Oslo");
+List<Person> aged = cache.search(Person::age, ValueRange.between(20, 40));
+Person simon = cache.get(Person.class, 1L);
+```
+
+ZDCache updates the indexes when you call `put`. It does not notice changes made to an object after it was put, so cache immutable objects such as records, and put a new version to change one.
+
+[Search specifications](#search-specifications) covers nested collections and other ways to declare dimensions, and [Choosing a configuration](#choosing-a-configuration) the settings for different workloads.
+
+## Performance
+
+ZDCache is built for workloads that search cached objects. In the published run at 50,000 entries:
+
+| Search, one thread | ZDCache | CQEngine | ZDCache is |
+|---|---:|---:|---:|
+| Prefix | 0.71 µs | 8.3 µs | 12× faster |
+| Exact | 3.4 µs | 6.1 µs | 1.8× faster |
+| Compound | 0.84 µs | 14 µs | 16× faster |
+| Range | 38 µs | 81 µs | 2.1× faster |
+
+With three threads searching and a fourth writing now and then, ZDCache answers 2.5–3.7 times as many searches as CQEngine. Caches without indexes have to scan every entry, which is 7–1,800× slower.
+
+The searches come at a cost:
+
+- Indexes take memory and make writes slower. Four indexes raise the memory per entry from 123 to 359 bytes, not counting the cached objects, and a `put` from 55 ns to 1.3 µs.
+- For key-value workloads under concurrent load, Caffeine and cache2k are faster: with four threads, ZDCache reads at about a third of Caffeine's rate. If you only look entries up by key, use one of them.
+- The benchmarks ran on the author's development machine on Java 25, and none of them put the caches under eviction pressure. They indicate gains and losses, not guarantees.
+
+The [interactive report](https://zdcache.github.io/zdcache/benchmark/) has every library and configuration at every size, and [Benchmark](#benchmark) describes what is measured.
+
+## When should you use ZDCache?
+
+ZDCache suits bounded collections of objects that are read often and searched by more than their key, such as reference data, product catalogues and user directories.
+
+| Choose ZDCache when | Consider something else when |
+|---|---|
+| You look cached objects up by their properties, not only by key | You only look values up by key: Caffeine or cache2k |
+| Your searches use prefixes, ranges or combinations of values | You need the highest key-value throughput from many threads: Caffeine or cache2k |
+| You keep several Java types in one bounded cache | You need expiry or persistence, which ZDCache does not provide |
+| Searches must run inside the application, without a network call | Several instances of an application must share the cache: [DZDCache](https://github.com/zdcache/dzdcache) replicates searchable ZDCache caches between them |
 
 ## Installation
 
@@ -21,37 +97,18 @@ implementation("io.github.zdcache:zdcache:0.3.1")
 zdcache has no runtime dependencies, but the cache can use Caffeine under the hood if configured so.
 To use `IdentityStoreFactory.caffeine()`, add `com.github.ben-manes.caffeine:caffeine` as well.
 
-## Requirements and build
+ZDCache requires Java 21 or newer. The published benchmark was measured on Java 25.
 
-- JDK 21+
-- Gradle 9.3.0 via `./gradlew` (Windows: `gradlew.bat`) or a locally installed Gradle
-- Internet access on first build for Gradle and Maven Central dependencies
+## Search specifications
 
-```sh
-./gradlew test
-./gradlew jmh             # JMH benchmarks against Caffeine, cache2k, Guava and CQEngine
-./gradlew footprint       # heap bytes per cached entry
-./gradlew build
-```
-
-**Wrapper note:** The official Gradle 9.7.0 wrapper JAR is committed in `gradle/wrapper`.
-If it is missing, the included `gradlew`/`gradlew.bat` scripts download it and verify its
-SHA-256 before running it. Alternatively, run `gradle test` with a locally installed Gradle.
-
-## Quick start
+A specification declares a type's identity and the dimensions it can be searched by. Dimensions can reach into nested lists, and a search names a nested dimension by its path:
 
 ```java
 import io.github.zdcache.*;
-import io.github.zdcache.store.IdentityStoreFactory;
 import java.util.List;
 
 record Address(String city, List<String> tags) {}
 record Person(long id, String name, int age, List<Address> addresses) {}
-
-var cache = ZDCache.builder()
-    .defaultMaxPerType(10_000)
-    .capacity(Person.class, 5_000)
-    .build();
 
 // IMPORTANT: reuse this exact identity instance in replacement specifications.
 var personId = IdentityDimension.of(Person.class, "id", Person::id);
@@ -67,15 +124,10 @@ var spec = SearchSpecification.builder(personId)
 
 cache.put(new Person(1, "Simon", 32,
     List.of(new Address("Oslo", List.of("home", "office")))), spec);
-cache.put(new Person(2, "Simone", 25, List.of()));
 
-// The method reference gives both the type and the dimension:
-List<Person> people = cache.search(Person::name, "si");
-List<Person> aged = cache.search(Person::age, ValueRange.between(20, 40));
 // Nested dimensions by their path, as a compact string or as a chain of method references:
 List<Person> inOslo = cache.search(Person.class, "addresses.city", "os");
 List<Person> inOsloToo = cache.search(Person::addresses, Address::city, "os");
-Person one = cache.get(Person.class, 1L);
 
 // Full per-type reindex; unchanged identity object is required.
 var nextSpec = SearchSpecification.builder(personId)
@@ -83,35 +135,14 @@ var nextSpec = SearchSpecification.builder(personId)
     .build();
 cache.updateSpecification(Person.class, nextSpec);
 
-// Switch identity-store implementations with no changes to the search code:
-var usingCaffeine = ZDCache.builder()
-    .identityStore(IdentityStoreFactory.caffeine())
-    .build();
-
-// The default buffered LRU store keeps strict LRU order; approximate recency trades
-// exact order under heavy contention for higher concurrent throughput:
-var forThroughput = ZDCache.builder()
-    .recency(Recency.APPROXIMATE)
-    .build();
-
-// One lock per type is the default; Locking.SINGLE shares one lock across all types:
-var serialized = ZDCache.builder()
-    .locking(Locking.SINGLE)
-    .build();
-
-// Several calls across types as one step that no other thread sees half done:
-cache.atomically(() -> {
-    Person simon = cache.get(Person.class, 1L);
-    cache.put(new Person(simon.id(), simon.name(), simon.age() + 1, simon.addresses()));
-    cache.remove(Person.class, 2L);
-});
-
 // Reads that do not count as use, and housekeeping:
 Person quiet = cache.peek(Person.class, 1L);
-boolean cached = cache.contains(Person.class, 2L);
+boolean cached = cache.contains(Person.class, 1L);
 List<Person> everyone = cache.values(Person.class);
 cache.clear(Person.class);
 ```
+
+A compound dimension indexes a combination you search often; see [Indexes](#indexes).
 
 ### Other ways to declare and search
 
@@ -241,6 +272,17 @@ cannot proceed until the block ends. A block nested inside another runs as part 
 lock, but ordinary writes to different types no longer run in parallel.
 
 ## Choosing a configuration
+
+| Workload | Configuration |
+|---|---|
+| Types you search, read or updated: most caches | The default, `ZDCache.builder().build()` |
+| Types without indexes, inside a searchable cache, read and written by many threads | `recency(Recency.APPROXIMATE)` |
+| One thread, tight on memory | `identityStore(IdentityStoreFactory.linkedHashMap())` |
+| Different threads writing different types | `Locking.PER_TYPE`, the default |
+| Several calls across types that must look like one step | `atomically(...)` |
+| Only lookups by key, no searches | Caffeine or cache2k instead of ZDCache |
+
+The sections below explain each choice with figures from the benchmark.
 
 Three configurations cover most uses. They differ in how many threads use the cache and whether a type is
 searched. The figures come from the published benchmark run below, measured on Java 25 on one thread unless
@@ -556,6 +598,22 @@ Only a full run can be published. `./benchmark -publish` copies the report to `d
    have changed since it was indexed.
 8. Caffeine is an optional dependency: add `com.github.ben-manes.caffeine:caffeine`
    yourself to use `IdentityStoreFactory.caffeine()`.
+
+## Requirements and build
+
+- JDK 21+
+- Gradle 9.3.0 via `./gradlew` (Windows: `gradlew.bat`) or a locally installed Gradle
+- Internet access on first build for Gradle and Maven Central dependencies
+
+```sh
+./gradlew test
+./gradlew jmh             # JMH benchmarks against Caffeine, cache2k, Guava and CQEngine
+./gradlew footprint       # heap bytes per cached entry
+./gradlew build
+```
+
+**Wrapper note:** The official Gradle 9.3.0 wrapper JAR is committed in `gradle/wrapper`.
+Alternatively, run `gradle test` with a locally installed Gradle.
 
 ## Project map
 
