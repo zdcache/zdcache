@@ -1,5 +1,6 @@
 package io.github.zdcache;
 
+import io.github.zdcache.internal.Getters;
 import java.util.Objects;
 import java.util.function.Function;
 
@@ -21,6 +22,10 @@ public final class IdentityDimension<T, ID> {
     public static <T, ID> IdentityDimension<T, ID> of(
             Class<T> type, String name, Function<T, ID> extractor) {
         return new IdentityDimension<>(type, name, Objects.requireNonNull(extractor));
+    }
+
+    public static <T, ID> IdentityDimension<T, ID> of(Getter<T, ID> getter) {
+        return new IdentityDimension<>(Getters.type(getter), Getters.name(getter), getter);
     }
 
     /** Identity supplied to cache.put(Class, ID, T), instead of extracted from T. */

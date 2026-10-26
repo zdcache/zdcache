@@ -249,4 +249,36 @@ class MethodReferenceSpecificationTest {
             spec.dimension("cityTag").parts().stream().map(SearchDimension.Part::name).toList());
         assertEquals(List.of(1L, 2L), personIds(cache.search(Person.class, "cityTag", "home", "s")));
     }
+
+    @Test void anIdentityTakesItsTypeAndNameFromARecordComponent() {
+        IdentityDimension<Person, Long> id = IdentityDimension.of(Person::id);
+        assertEquals(Person.class, id.type());
+        assertEquals("id", id.name());
+        assertEquals(7L, id.extract(new Person(7L, "Simon", "Oslo", 29, List.of(), List.of())));
+    }
+
+    @Test void anIdentityTakesItsNameFromAGetter() {
+        IdentityDimension<Customer, Long> id = IdentityDimension.of(Customer::getId);
+        assertEquals(Customer.class, id.type());
+        assertEquals("id", id.name());
+    }
+
+    @Test void anIdentityInheritedFromASupertypeBelongsToTheTypeItIsDeclaredFor() {
+        IdentityDimension<VipCustomer, Long> vip = IdentityDimension.of(Customer::getId);
+        IdentityDimension<Pet, Long> pet = IdentityDimension.<Pet, Long>of(Named::id);
+        assertEquals(VipCustomer.class, vip.type());
+        assertEquals(Pet.class, pet.type());
+        assertEquals("id", pet.name());
+    }
+
+    @Test void anIdentityFromALambdaNeedsItsTypeAndName() {
+        assertThrows(IllegalArgumentException.class, () -> IdentityDimension.<Person, Long>of(p -> p.id()));
+    }
+
+    @Test void aCacheFindsEntriesByAnIdentityFromAMethodReference() {
+        var spec = SearchSpecification.builder(IdentityDimension.of(Person::id)).prefix(Person::name).build();
+        var cache = people(spec);
+        assertEquals("Siri", cache.get(Person.class, 2L).name());
+        assertEquals(List.of(1L, 2L), personIds(cache.search(Person::name, "si")));
+    }
 }
