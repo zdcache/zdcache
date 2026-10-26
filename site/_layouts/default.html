@@ -40,7 +40,7 @@
     line-height: 1.6;
   }
   header {
-    display: flex; gap: 20px; align-items: center;
+    display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center;
     padding: 14px 32px; border-bottom: 1px solid var(--border); font-size: 14px;
   }
   header .name { font-weight: 600; color: var(--text-primary); }
@@ -67,8 +67,13 @@
 <body>
 <header>
   <span class="name">ZDCache</span>
-  <a href="{{ '/' | relative_url }}" aria-current="page">README</a>
-  <a href="{{ '/benchmark/' | relative_url }}">Benchmark report</a>
+  <a href="{{ '/' | relative_url }}"{% if page.nav == "home" %} aria-current="page"{% endif %}>Home</a>
+  <a href="{{ '/search-specifications/' | relative_url }}"{% if page.nav == "search-specifications" %} aria-current="page"{% endif %}>Search specifications</a>
+  <a href="{{ '/configuration/' | relative_url }}"{% if page.nav == "configuration" %} aria-current="page"{% endif %}>Configuration</a>
+  <a href="{{ '/benchmarks/' | relative_url }}"{% if page.nav == "benchmarks" %} aria-current="page"{% endif %}>Benchmarks</a>
+  <a href="{{ '/limitations/' | relative_url }}"{% if page.nav == "limitations" %} aria-current="page"{% endif %}>Limitations</a>
+  <a href="{{ '/development/' | relative_url }}"{% if page.nav == "development" %} aria-current="page"{% endif %}>Development</a>
+  <a href="{{ '/benchmark/' | relative_url }}">Interactive report</a>
   <a href="https://github.com/{{ site.github.repository_nwo | default: 'zdcache/zdcache' }}">GitHub</a>
 </header>
 <main>
