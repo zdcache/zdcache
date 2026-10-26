@@ -24,11 +24,7 @@ jobs:
           mkdir -p _site_src
           cp -R site/. _site_src/
           cp -R docs/benchmark _site_src/benchmark
-          {
-            printf -- '---\nlayout: default\ntitle: ZDCache\n---\n{%% raw %%}\n'
-            sed -E "s#\]\(([^)#:]+)\)#](https://github.com/${GITHUB_REPOSITORY}/blob/main/\1)#g" README.md
-            printf '\n{%% endraw %%}\n'
-          } > _site_src/index.md
+          python3 tools/site/pages.py README.md _site_src "$GITHUB_REPOSITORY"
       - uses: actions/configure-pages@v6
       - uses: actions/jekyll-build-pages@v1
         with:
