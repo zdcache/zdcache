@@ -172,4 +172,32 @@ public final class PrefixTrieIndex<ID> implements DimensionIndex<ID> {
             for (Node child : next.children) pending.push(child);
         }
     }
+
+    public void forEachWithin(Object query, int maxEdits, Consumer<? super ID> action) {
+        String text = normalized(query);
+        int[] first = new int[text.length() + 1];
+        for (int j = 0; j < first.length; j++) first[j] = j;
+        if (root.ids != null && first[text.length()] <= maxEdits) Ids.forEach(root.ids, action);
+        for (Node child : root.children) within(child, text, maxEdits, first, null, (char) 0, 0, action);
+    }
+
+    private static int smallest(int[] row) {
+        int smallest = row[0];
+        for (int edits : row) if (edits < smallest) smallest = edits;
+        return smallest;
+    }
+
+    private void within(Node node, String query, int maxEdits, int[] previous, int[] beforePrevious, char before, int depth,
+                        Consumer<? super ID> action) {
+        for (int e = 0; e < node.edge.length(); e++) {
+            char c = node.edge.charAt(e);
+            int[] row = EditDistance.next(previous, beforePrevious, ++depth, c, before, query);
+            if (smallest(row) > maxEdits) return;
+            beforePrevious = previous;
+            previous = row;
+            before = c;
+        }
+        if (node.ids != null && previous[query.length()] <= maxEdits) Ids.forEach(node.ids, action);
+        for (Node child : node.children) within(child, query, maxEdits, previous, beforePrevious, before, depth, action);
+    }
 }

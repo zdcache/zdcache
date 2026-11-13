@@ -101,6 +101,16 @@ registerFootprint("footprint", "footprint", "Measures heap bytes per cached entr
 registerFootprint("footprintCompact", "footprint-compact",
     "Measures heap bytes per cached entry with compact object headers.", "-XX:+UseCompactObjectHeaders")
 
+tasks.register<JavaExec>("textFootprint") {
+    description = "Measures heap bytes per cached entry for a name dimension declared with prefix and with prefixSplit."
+    group = "verification"
+    classpath = jmh.runtimeClasspath
+    mainClass = "io.github.zdcache.bench.TextFootprint"
+    javaLauncher = benchmarkJava
+    maxHeapSize = "2g"
+    jvmArgs("-Djdk.attach.allowAttachSelf=true", "-Djol.magicFieldOffset=true")
+}
+
 mavenPublishing {
     publishToMavenCentral()
     signAllPublications()

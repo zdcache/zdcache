@@ -10,6 +10,7 @@ import io.github.zdcache.UndeclaredSearchStrategyException;
 import io.github.zdcache.ValueRange;
 import io.github.zdcache.index.CompoundIndex;
 import io.github.zdcache.index.DimensionIndex;
+import io.github.zdcache.index.EditDistance;
 import io.github.zdcache.index.ExactIndex;
 import io.github.zdcache.index.PrefixTrieIndex;
 import io.github.zdcache.index.RangeIndex;
@@ -179,6 +180,10 @@ public final class DimensionRegistry<T, ID> {
             matchWords(position, query, action);
             return;
         }
+        if (values != null && values.length == 1 && values[0] instanceof Match.Fuzzy query) {
+            matchFuzzy(position, query, action);
+            return;
+        }
         indexes.get(position).forEachMatch(query(dimensions.get(position), values), action);
     }
 
@@ -210,12 +215,38 @@ public final class DimensionRegistry<T, ID> {
         Object query = values[0];
         String text = query instanceof Match match ? match.text() : (String) query;
         Split split = dimension.split() == null ? Split.WHITESPACE : dimension.split();
-        RankLevel best = RankLevel.WORDS_IN_ANY_ORDER;
+        RankLevel best = query instanceof Match.Fuzzy ? RankLevel.TWO_EDITS : RankLevel.WORDS_IN_ANY_ORDER;
         for (Object value : dimension.values(entity)) {
-            RankLevel level = rank((String) value, text, split);
-            if (level.compareTo(best) < 0) best = level;
+            RankLevel level = rank((String) value, query instanceof Match.Fuzzy fuzzy ? fuzzy : null, text, dimension.split(), split);
+            if (level != null && level.compareTo(best) < 0) best = level;
         }
         return best;
+    }
+
+    private static RankLevel rank(String value, Match.Fuzzy fuzzy, String text, Split wordsOf, Split split) {
+        if (fuzzy == null) return rank(value, text, split);
+        int edits = wordsOf == null ? wholeEdits(value, text, fuzzy) : wordEdits(value, text, fuzzy, wordsOf);
+        if (edits == 0) return rank(value, text, split);
+        if (edits == 1) return RankLevel.ONE_EDIT;
+        return edits == 2 ? RankLevel.TWO_EDITS : null;
+    }
+
+    private static int wholeEdits(String value, String text, Match.Fuzzy fuzzy) {
+        String wanted = text.toLowerCase(Locale.ROOT);
+        int edits = EditDistance.between(value.toLowerCase(Locale.ROOT), wanted);
+        return edits <= fuzzy.editsFor(wanted) ? edits : Integer.MAX_VALUE;
+    }
+
+    private static int wordEdits(String value, String text, Match.Fuzzy fuzzy, Split split) {
+        Set<String> words = split.words(value);
+        int worst = 0;
+        for (String wanted : split.words(text)) {
+            int closest = Integer.MAX_VALUE;
+            for (String word : words) closest = Math.min(closest, EditDistance.between(word, wanted));
+            if (closest > fuzzy.editsFor(wanted)) return Integer.MAX_VALUE;
+            worst = Math.max(worst, closest);
+        }
+        return worst;
     }
 
     private static RankLevel rank(String value, String query, Split split) {
@@ -234,6 +265,29 @@ public final class DimensionRegistry<T, ID> {
 
     private static String normalized(String text) {
         return SPACES.matcher(text.strip()).replaceAll(" ").toLowerCase(Locale.ROOT);
+    }
+
+    private void matchFuzzy(int position, Match.Fuzzy query, Consumer<? super IndexedEntry<T>> action) {
+        SearchDimension<T> dimension = dimensions.get(position);
+        if (dimension.kind() != IndexKind.PREFIX) throw undeclared(dimension.path(), "fuzzy", "prefix or prefixSplit");
+        if (dimension.split() == null) {
+            String text = query.text().toLowerCase(Locale.ROOT);
+            Set<IndexedEntry<T>> found = new LinkedHashSet<>();
+            ((PrefixTrieIndex<IndexedEntry<T>>) indexes.get(position)).forEachWithin(text, query.editsFor(text), found::add);
+            found.forEach(action);
+            return;
+        }
+        Set<String> wanted = dimension.split().words(query.text());
+        if (wanted.isEmpty()) throw new IllegalArgumentException("A fuzzy search on " + dimension.path() + " needs at least one word");
+        Set<IndexedEntry<T>> found = null;
+        for (String word : wanted) {
+            Set<IndexedEntry<T>> previous = found;
+            Set<IndexedEntry<T>> matching = new LinkedHashSet<>();
+            words.get(position).forEachWithin(word, query.editsFor(word), entry -> { if (previous == null || previous.contains(entry)) matching.add(entry); });
+            if (matching.isEmpty()) return;
+            found = matching;
+        }
+        found.forEach(action);
     }
 
     private UndeclaredSearchStrategyException undeclared(String path, String strategy, String declaration) {
@@ -272,6 +326,7 @@ public final class DimensionRegistry<T, ID> {
     private Object queryValue(String path, IndexKind kind, Object value) {
         if (value == null) throw new IllegalArgumentException("Search value for " + path + " must not be null");
         if (value instanceof Match.Words) throw undeclared(path, "words", "prefixSplit");
+        if (value instanceof Match.Fuzzy) throw undeclared(path, "fuzzy", "prefix or prefixSplit on a dimension of its own");
         if (value instanceof Match.Prefix prefix) {
             if (kind != IndexKind.PREFIX) throw undeclared(path, "prefix", "prefix");
             value = prefix.text();
