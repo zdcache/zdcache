@@ -28,7 +28,12 @@ public sealed interface Match {
         }
     }
 
+    record Contains(String text) implements Match {
+        public Contains { Objects.requireNonNull(text, "Search text must not be null"); }
+    }
+
     static Match prefix(String text) { return new Prefix(text); }
+    static Match contains(String text) { return new Contains(text); }
     static Match fuzzy(String text) { return new Fuzzy(text, null); }
     static Match fuzzy(String text, int maxEdits) { return new Fuzzy(text, maxEdits); }
     static Match words(String text) { return new Words(text); }

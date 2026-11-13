@@ -229,7 +229,7 @@ public final class TypeCache<T, ID> {
                 throw new MissingSearchSpecificationStrategyException(specification.type());
             }
             DimensionRegistry<T, ID> registry = indexes;
-            if (values != null && values.length == 1 && (values[0] instanceof Match.Words || values[0] instanceof Match.Fuzzy)) {
+            if (values != null && values.length == 1 && (values[0] instanceof Match.Words || values[0] instanceof Match.Fuzzy || values[0] instanceof Match.Contains)) {
                 List<S> found = new ArrayList<>();
                 for (Ranked<S> ranked : ranked(registry, view, dimension, values)) found.add(ranked.result());
                 return Collections.unmodifiableList(found);
@@ -257,14 +257,17 @@ public final class TypeCache<T, ID> {
     }
 
     private <S> List<Ranked<S>> ranked(DimensionRegistry<T, ID> registry, Class<S> view, String dimension, Object... values) {
-        boolean checksItsDimension = values != null && values.length == 1 && (values[0] instanceof Match.Words || values[0] instanceof Match.Fuzzy);
+        boolean checksItsDimension = values != null && values.length == 1 && (values[0] instanceof Match.Words || values[0] instanceof Match.Fuzzy || values[0] instanceof Match.Contains);
         if (!checksItsDimension) registry.requireRankable(dimension);
         Set<IndexedEntry<T>> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         List<Ranked<S>> found = new ArrayList<>();
+        List<Ranker<T>> ranker = new ArrayList<>(1);
         registry.forEachMatch(dimension, values, entry -> {
             if (entry.evicted() || !seen.add(entry)) return;
             T entity = entry.entity();
-            if (view.isInstance(entity)) found.add(new Ranked<>(view.cast(entity), registry.rank(dimension, values, entity)));
+            if (!view.isInstance(entity)) return;
+            if (ranker.isEmpty()) ranker.add(registry.ranker(dimension, values));
+            found.add(new Ranked<>(view.cast(entity), ranker.getFirst().rank(entity)));
         });
         found.sort(Comparator.comparing(Ranked::rankLevel));
         return found;

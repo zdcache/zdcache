@@ -17,12 +17,15 @@ public final class TextFootprint {
         var none = SearchSpecification.basic(id);
         var prefix = SearchSpecification.builder(id).prefix(Student::name).build();
         var split = SearchSpecification.builder(id).prefixSplit(Student::name).build();
-        System.out.println("| Students | keys only | prefix | prefixSplit | prefix index | word index |");
-        System.out.println("|---:|---:|---:|---:|---:|---:|");
+        var contains = SearchSpecification.builder(id).prefixContains(Student::name).build();
+        System.out.println("| Students | keys only | prefix | prefixSplit | prefixContains | prefix index | word index | trigram index |");
+        System.out.println("|---:|---:|---:|---:|---:|---:|---:|---:|");
         for (int size : new int[] {10_000, 100_000}) {
             Student[] students = students(size);
             double keys = bytesPerEntry(students, none), whole = bytesPerEntry(students, prefix), words = bytesPerEntry(students, split);
-            System.out.println(String.format(Locale.ROOT, "| %,d | %.1f | %.1f | %.1f | %.1f | %.1f |", size, keys, whole, words, whole - keys, words - whole));
+            double inside = bytesPerEntry(students, contains);
+            System.out.println(String.format(Locale.ROOT, "| %,d | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f |",
+                size, keys, whole, words, inside, whole - keys, words - whole, inside - whole));
         }
     }
 

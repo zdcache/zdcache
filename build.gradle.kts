@@ -102,7 +102,7 @@ registerFootprint("footprintCompact", "footprint-compact",
     "Measures heap bytes per cached entry with compact object headers.", "-XX:+UseCompactObjectHeaders")
 
 tasks.register<JavaExec>("textFootprint") {
-    description = "Measures heap bytes per cached entry for a name dimension declared with prefix and with prefixSplit."
+    description = "Measures heap bytes per cached entry for a name dimension declared with prefix, prefixSplit and prefixContains."
     group = "verification"
     classpath = jmh.runtimeClasspath
     mainClass = "io.github.zdcache.bench.TextFootprint"

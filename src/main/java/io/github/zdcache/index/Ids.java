@@ -116,6 +116,16 @@ final class Ids {
         return holder != null && holder.equals(id) ? null : holder;
     }
 
+    static int size(Object holder) {
+        if (holder == null) return 0;
+        return holder instanceof Many many ? many.size() : 1;
+    }
+
+    static boolean contains(Object holder, Object id) {
+        if (holder == null) return false;
+        return holder instanceof Many many ? many.find(id) >= 0 : holder.equals(id);
+    }
+
     @SuppressWarnings("unchecked")
     static <ID> void forEach(Object holder, Consumer<? super ID> action) {
         if (holder == null) return;

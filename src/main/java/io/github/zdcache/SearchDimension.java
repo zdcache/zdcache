@@ -16,22 +16,24 @@ public final class SearchDimension<T> {
     private final List<Part> parts;
     private final boolean multiValued;
     private final Split split;
+    private final boolean contains;
     private final Function<T, ? extends Iterable<?>> extractor;
 
     SearchDimension(String path, IndexKind kind, boolean multiValued, Function<T, ? extends Iterable<?>> extractor) {
-        this(path, kind, List.of(), multiValued, null, extractor);
+        this(path, kind, List.of(), multiValued, null, false, extractor);
     }
 
-    SearchDimension(String path, IndexKind kind, boolean multiValued, Split split, Function<T, ? extends Iterable<?>> extractor) {
-        this(path, kind, List.of(), multiValued, split, extractor);
+    SearchDimension(String path, IndexKind kind, boolean multiValued, Split split, boolean contains,
+                    Function<T, ? extends Iterable<?>> extractor) {
+        this(path, kind, List.of(), multiValued, split, contains, extractor);
     }
 
     SearchDimension(String path, IndexKind kind, List<Part> parts, boolean multiValued,
                     Function<T, ? extends Iterable<?>> extractor) {
-        this(path, kind, parts, multiValued, null, extractor);
+        this(path, kind, parts, multiValued, null, false, extractor);
     }
 
-    private SearchDimension(String path, IndexKind kind, List<Part> parts, boolean multiValued, Split split,
+    private SearchDimension(String path, IndexKind kind, List<Part> parts, boolean multiValued, Split split, boolean contains,
                             Function<T, ? extends Iterable<?>> extractor) {
         this.path = Objects.requireNonNull(path);
         this.kind = Objects.requireNonNull(kind);
@@ -39,6 +41,8 @@ public final class SearchDimension<T> {
         this.multiValued = multiValued;
         if (split != null && kind != IndexKind.PREFIX) throw new IllegalArgumentException("Only a prefix dimension can be split into words");
         this.split = split;
+        if (contains && kind != IndexKind.PREFIX) throw new IllegalArgumentException("Only a prefix dimension can be searched inside");
+        this.contains = contains;
         this.extractor = Objects.requireNonNull(extractor);
     }
 
@@ -47,6 +51,7 @@ public final class SearchDimension<T> {
     public List<Part> parts() { return parts; }
     public boolean multiValued() { return multiValued; }
     public Split split() { return split; }
+    public boolean contains() { return contains; }
 
     /** Extract a stable, de-duplicated snapshot of index keys. Null values are ignored. */
     public Set<Object> values(T entity) {

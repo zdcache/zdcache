@@ -98,6 +98,15 @@ public final class SearchSpecification<T, ID> {
         public Builder<T, ID> prefixSplit(Getter<T, String> getter, Split split) {
             root.prefixSplit(getter, split); return this;
         }
+        public Builder<T, ID> prefixContains(String property) {
+            root.prefixContains(property); return this;
+        }
+        public Builder<T, ID> prefixContains(String name, Function<T, String> extractor) {
+            root.prefixContains(name, extractor); return this;
+        }
+        public Builder<T, ID> prefixContains(Getter<T, String> getter) {
+            root.prefixContains(getter); return this;
+        }
         public <V> Builder<T, ID> exact(String name, Function<T, V> extractor) {
             root.exact(name, extractor); return this;
         }
@@ -210,15 +219,15 @@ public final class SearchSpecification<T, ID> {
 
         private <V> void leaf(String name, IndexKind kind, boolean multi,
                               Function<CURRENT, ? extends Iterable<V>> extractor) {
-            leaf(name, kind, multi, null, extractor);
+            leaf(name, kind, multi, null, false, extractor);
         }
 
-        private <V> void leaf(String name, IndexKind kind, boolean multi, Split split,
+        private <V> void leaf(String name, IndexKind kind, boolean multi, Split split, boolean contains,
                               Function<CURRENT, ? extends Iterable<V>> extractor) {
             String fullPath = child(name);
             @SuppressWarnings("unchecked")
             Function<ROOT, ? extends Iterable<?>> atRoot = root -> extractor.apply((CURRENT) root);
-            SearchDimension<ROOT> def = new SearchDimension<>(fullPath, kind, multi || !path.isEmpty(), split, path.isEmpty() ? atRoot : root -> {
+            SearchDimension<ROOT> def = new SearchDimension<>(fullPath, kind, multi || !path.isEmpty(), split, contains, path.isEmpty() ? atRoot : root -> {
                 List<V> values = new ArrayList<>();
                 for (CURRENT current : parents.apply(root)) {
                     if (current == null) continue;
@@ -261,7 +270,22 @@ public final class SearchSpecification<T, ID> {
         private PathBuilder<ROOT, CURRENT> split(String name, Function<CURRENT, ?> extractor, Split split) {
             Objects.requireNonNull(extractor);
             Objects.requireNonNull(split);
-            leaf(name, IndexKind.PREFIX, false, split, current -> Collections.singletonList(extractor.apply(current)));
+            leaf(name, IndexKind.PREFIX, false, split, false, current -> Collections.singletonList(extractor.apply(current)));
+            return this;
+        }
+        public PathBuilder<ROOT, CURRENT> prefixContains(String property) {
+            String name = property(property);
+            return contains(name, current -> PropertyAccess.read(current, name));
+        }
+        public PathBuilder<ROOT, CURRENT> prefixContains(String name, Function<CURRENT, String> extractor) {
+            return contains(name, extractor);
+        }
+        public PathBuilder<ROOT, CURRENT> prefixContains(Getter<CURRENT, String> getter) {
+            return contains(Getters.name(getter), getter);
+        }
+        private PathBuilder<ROOT, CURRENT> contains(String name, Function<CURRENT, ?> extractor) {
+            Objects.requireNonNull(extractor);
+            leaf(name, IndexKind.PREFIX, false, null, true, current -> Collections.singletonList(extractor.apply(current)));
             return this;
         }
         public <V> PathBuilder<ROOT, CURRENT> exact(String name, Function<CURRENT, V> extractor) {
