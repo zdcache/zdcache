@@ -15,18 +15,30 @@ public final class SearchDimension<T> {
     private final IndexKind kind;
     private final List<Part> parts;
     private final boolean multiValued;
+    private final Split split;
     private final Function<T, ? extends Iterable<?>> extractor;
 
     SearchDimension(String path, IndexKind kind, boolean multiValued, Function<T, ? extends Iterable<?>> extractor) {
-        this(path, kind, List.of(), multiValued, extractor);
+        this(path, kind, List.of(), multiValued, null, extractor);
+    }
+
+    SearchDimension(String path, IndexKind kind, boolean multiValued, Split split, Function<T, ? extends Iterable<?>> extractor) {
+        this(path, kind, List.of(), multiValued, split, extractor);
     }
 
     SearchDimension(String path, IndexKind kind, List<Part> parts, boolean multiValued,
                     Function<T, ? extends Iterable<?>> extractor) {
+        this(path, kind, parts, multiValued, null, extractor);
+    }
+
+    private SearchDimension(String path, IndexKind kind, List<Part> parts, boolean multiValued, Split split,
+                            Function<T, ? extends Iterable<?>> extractor) {
         this.path = Objects.requireNonNull(path);
         this.kind = Objects.requireNonNull(kind);
         this.parts = List.copyOf(parts);
         this.multiValued = multiValued;
+        if (split != null && kind != IndexKind.PREFIX) throw new IllegalArgumentException("Only a prefix dimension can be split into words");
+        this.split = split;
         this.extractor = Objects.requireNonNull(extractor);
     }
 
@@ -34,6 +46,7 @@ public final class SearchDimension<T> {
     public IndexKind kind() { return kind; }
     public List<Part> parts() { return parts; }
     public boolean multiValued() { return multiValued; }
+    public Split split() { return split; }
 
     /** Extract a stable, de-duplicated snapshot of index keys. Null values are ignored. */
     public Set<Object> values(T entity) {

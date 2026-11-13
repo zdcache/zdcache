@@ -83,6 +83,21 @@ public final class SearchSpecification<T, ID> {
         public Builder<T, ID> prefix(String name, Function<T, String> extractor) {
             root.prefix(name, extractor); return this;
         }
+        public Builder<T, ID> prefixSplit(String property) {
+            root.prefixSplit(property); return this;
+        }
+        public Builder<T, ID> prefixSplit(String property, Split split) {
+            root.prefixSplit(property, split); return this;
+        }
+        public Builder<T, ID> prefixSplit(String name, Function<T, String> extractor, Split split) {
+            root.prefixSplit(name, extractor, split); return this;
+        }
+        public Builder<T, ID> prefixSplit(Getter<T, String> getter) {
+            root.prefixSplit(getter); return this;
+        }
+        public Builder<T, ID> prefixSplit(Getter<T, String> getter, Split split) {
+            root.prefixSplit(getter, split); return this;
+        }
         public <V> Builder<T, ID> exact(String name, Function<T, V> extractor) {
             root.exact(name, extractor); return this;
         }
@@ -195,10 +210,15 @@ public final class SearchSpecification<T, ID> {
 
         private <V> void leaf(String name, IndexKind kind, boolean multi,
                               Function<CURRENT, ? extends Iterable<V>> extractor) {
+            leaf(name, kind, multi, null, extractor);
+        }
+
+        private <V> void leaf(String name, IndexKind kind, boolean multi, Split split,
+                              Function<CURRENT, ? extends Iterable<V>> extractor) {
             String fullPath = child(name);
             @SuppressWarnings("unchecked")
             Function<ROOT, ? extends Iterable<?>> atRoot = root -> extractor.apply((CURRENT) root);
-            SearchDimension<ROOT> def = new SearchDimension<>(fullPath, kind, multi || !path.isEmpty(), path.isEmpty() ? atRoot : root -> {
+            SearchDimension<ROOT> def = new SearchDimension<>(fullPath, kind, multi || !path.isEmpty(), split, path.isEmpty() ? atRoot : root -> {
                 List<V> values = new ArrayList<>();
                 for (CURRENT current : parents.apply(root)) {
                     if (current == null) continue;
@@ -221,6 +241,28 @@ public final class SearchSpecification<T, ID> {
 
         public PathBuilder<ROOT, CURRENT> prefix(String name, Function<CURRENT, String> extractor) {
             scalar(name, IndexKind.PREFIX, extractor); return this;
+        }
+        public PathBuilder<ROOT, CURRENT> prefixSplit(String property) {
+            return prefixSplit(property, Split.WHITESPACE);
+        }
+        public PathBuilder<ROOT, CURRENT> prefixSplit(String property, Split split) {
+            String name = property(property);
+            return split(name, current -> PropertyAccess.read(current, name), split);
+        }
+        public PathBuilder<ROOT, CURRENT> prefixSplit(String name, Function<CURRENT, String> extractor, Split split) {
+            return split(name, extractor, split);
+        }
+        public PathBuilder<ROOT, CURRENT> prefixSplit(Getter<CURRENT, String> getter) {
+            return prefixSplit(getter, Split.WHITESPACE);
+        }
+        public PathBuilder<ROOT, CURRENT> prefixSplit(Getter<CURRENT, String> getter, Split split) {
+            return split(Getters.name(getter), getter, split);
+        }
+        private PathBuilder<ROOT, CURRENT> split(String name, Function<CURRENT, ?> extractor, Split split) {
+            Objects.requireNonNull(extractor);
+            Objects.requireNonNull(split);
+            leaf(name, IndexKind.PREFIX, false, split, current -> Collections.singletonList(extractor.apply(current)));
+            return this;
         }
         public <V> PathBuilder<ROOT, CURRENT> exact(String name, Function<CURRENT, V> extractor) {
             scalar(name, IndexKind.EXACT, extractor); return this;

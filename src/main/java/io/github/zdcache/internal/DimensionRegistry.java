@@ -1,8 +1,11 @@
 package io.github.zdcache.internal;
 
 import io.github.zdcache.IndexKind;
+import io.github.zdcache.Match;
 import io.github.zdcache.SearchDimension;
 import io.github.zdcache.SearchSpecification;
+import io.github.zdcache.Split;
+import io.github.zdcache.UndeclaredSearchStrategyException;
 import io.github.zdcache.ValueRange;
 import io.github.zdcache.index.CompoundIndex;
 import io.github.zdcache.index.DimensionIndex;
@@ -13,6 +16,7 @@ import io.github.zdcache.store.IndexedEntry;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -27,6 +31,7 @@ public final class DimensionRegistry<T, ID> {
     private final SearchSpecification<T, ID> specification;
     private final List<SearchDimension<T>> dimensions;
     private final List<DimensionIndex<IndexedEntry<T>>> indexes = new ArrayList<>();
+    private final List<PrefixTrieIndex<IndexedEntry<T>>> words = new ArrayList<>();
     private final Map<String, Integer> positions = new HashMap<>();
 
     public DimensionRegistry(SearchSpecification<T, ID> specification) {
@@ -40,7 +45,25 @@ public final class DimensionRegistry<T, ID> {
                 case RANGE -> new RangeIndex<>();
                 case COMPOUND -> new CompoundIndex<>(dimension.parts().getLast().kind());
             });
+            words.add(dimension.split() == null ? null : new PrefixTrieIndex<>());
         }
+    }
+
+    private Set<String> words(int position, Object slot) {
+        Split split = dimensions.get(position).split();
+        Set<String> all = new LinkedHashSet<>();
+        for (Object value : values(slot)) all.addAll(split.words((String) value));
+        return all;
+    }
+
+    private void addWords(int position, IndexedEntry<T> entry, Object slot) {
+        PrefixTrieIndex<IndexedEntry<T>> index = words.get(position);
+        if (index != null) for (String word : words(position, slot)) index.add(entry, word);
+    }
+
+    private void removeWords(int position, IndexedEntry<T> entry, Object slot) {
+        PrefixTrieIndex<IndexedEntry<T>> index = words.get(position);
+        if (index != null) for (String word : words(position, slot)) index.remove(entry, word);
     }
 
     public Object[] extract(T entity) {
@@ -87,6 +110,7 @@ public final class DimensionRegistry<T, ID> {
             } else if (slot != null) {
                 indexes.get(i).add(entry, slot);
             }
+            addWords(i, entry, slot);
         }
     }
 
@@ -98,6 +122,7 @@ public final class DimensionRegistry<T, ID> {
             } else if (slot != null) {
                 indexes.get(i).remove(entry, slot);
             }
+            removeWords(i, entry, slot);
         }
     }
 
@@ -116,7 +141,11 @@ public final class DimensionRegistry<T, ID> {
                 } else if (after[i] != null) {
                     index.replace(previous, entry, after[i]);
                 }
+                PrefixTrieIndex<IndexedEntry<T>> wordIndex = words.get(i);
+                if (wordIndex != null) for (String word : words(i, after[i])) wordIndex.replace(previous, entry, word);
             } else {
+                removeWords(i, previous, before[i]);
+                addWords(i, entry, after[i]);
                 if (before[i] instanceof Many many) {
                     for (Object value : many.values()) index.remove(previous, value);
                 } else if (before[i] != null) {
@@ -142,7 +171,31 @@ public final class DimensionRegistry<T, ID> {
 
     public void forEachMatch(String path, Object[] values, Consumer<? super IndexedEntry<T>> action) {
         int position = position(path);
+        if (values != null && values.length == 1 && values[0] instanceof Match.Words query) {
+            matchWords(position, query, action);
+            return;
+        }
         indexes.get(position).forEachMatch(query(dimensions.get(position), values), action);
+    }
+
+    private void matchWords(int position, Match.Words query, Consumer<? super IndexedEntry<T>> action) {
+        SearchDimension<T> dimension = dimensions.get(position);
+        if (dimension.split() == null) throw undeclared(dimension.path(), "words", "prefixSplit");
+        Set<String> wanted = dimension.split().words(query.text());
+        if (wanted.isEmpty()) throw new IllegalArgumentException("A words search on " + dimension.path() + " needs at least one word");
+        Set<IndexedEntry<T>> found = null;
+        for (String word : wanted) {
+            Set<IndexedEntry<T>> previous = found;
+            Set<IndexedEntry<T>> matching = new LinkedHashSet<>();
+            words.get(position).forEachMatch(word, entry -> { if (previous == null || previous.contains(entry)) matching.add(entry); });
+            if (matching.isEmpty()) return;
+            found = matching;
+        }
+        found.forEach(action);
+    }
+
+    private UndeclaredSearchStrategyException undeclared(String path, String strategy, String declaration) {
+        return new UndeclaredSearchStrategyException(specification.type(), path, strategy, declaration);
     }
 
     private int position(String path) {
@@ -151,7 +204,7 @@ public final class DimensionRegistry<T, ID> {
         return position;
     }
 
-    private static Object query(SearchDimension<?> dimension, Object[] values) {
+    private Object query(SearchDimension<?> dimension, Object[] values) {
         String path = dimension.path();
         if (dimension.kind() != IndexKind.COMPOUND) {
             if (values == null || values.length != 1) {
@@ -174,8 +227,13 @@ public final class DimensionRegistry<T, ID> {
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static Object queryValue(String path, IndexKind kind, Object value) {
+    private Object queryValue(String path, IndexKind kind, Object value) {
         if (value == null) throw new IllegalArgumentException("Search value for " + path + " must not be null");
+        if (value instanceof Match.Words) throw undeclared(path, "words", "prefixSplit");
+        if (value instanceof Match.Prefix prefix) {
+            if (kind != IndexKind.PREFIX) throw undeclared(path, "prefix", "prefix");
+            value = prefix.text();
+        }
         switch (kind) {
             case PREFIX -> {
                 if (!(value instanceof String)) {
