@@ -447,6 +447,16 @@ public final class ZDCache {
         cache.updateSpecification(replacement);
     }
 
+    public <T, ID> PreparedSpecification prepareSpecification(Class<T> type, SearchSpecification<T, ID> replacement) {
+        Objects.requireNonNull(replacement);
+        if (replacement.type() != type) {
+            throw new IllegalArgumentException("Type and specification must match");
+        }
+        TypeCache<T, ID> cache = typeCache(type);
+        if (cache == null) throw new MissingIdentitySpecificationException(type);
+        return cache.prepare(replacement);
+    }
+
     public <T> SearchSpecification<T, ?> getSpecification(Class<T> type) {
         TypeCache<T, ?> cache = typeCache(type);
         return cache == null ? null : cache.specification();

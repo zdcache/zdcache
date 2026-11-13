@@ -35,6 +35,30 @@ public final class SearchSpecification<T, ID> {
         return new Builder<>(identity);
     }
 
+    public static <T, ID> Builder<T, ID> builder(SearchSpecification<T, ID> base) {
+        Builder<T, ID> builder = new Builder<>(base.identity());
+        for (SearchDimension<T> dimension : base.dimensions()) builder.dimensions.put(dimension.path(), dimension);
+        return builder;
+    }
+
+    public SearchSpecification<T, ID> withStrategies(Getter<T, ?> dimension, TextStrategy... strategies) {
+        return withStrategies(Getters.name(dimension), strategies);
+    }
+
+    public SearchSpecification<T, ID> withStrategies(String path, TextStrategy... strategies) {
+        SearchDimension<T> upgraded = dimension(path).withStrategies(strategies);
+        return new SearchSpecification<>(identity, dimensions.stream().map(d -> d.path().equals(path) ? upgraded : d).toList());
+    }
+
+    public SearchSpecification<T, ID> without(Getter<T, ?> dimension) {
+        return without(Getters.name(dimension));
+    }
+
+    public SearchSpecification<T, ID> without(String path) {
+        dimension(path);
+        return new SearchSpecification<>(identity, dimensions.stream().filter(d -> !d.path().equals(path)).toList());
+    }
+
     public static <S> TypeRedirect<S> lookupAs(Class<S> type, SearchSpecification<? super S, ?> target) {
         return new TypeRedirect<>(type, target);
     }
@@ -106,6 +130,15 @@ public final class SearchSpecification<T, ID> {
         }
         public Builder<T, ID> prefixContains(Getter<T, String> getter) {
             root.prefixContains(getter); return this;
+        }
+        public Builder<T, ID> prefix(String property, TextStrategy... strategies) {
+            root.prefix(property, strategies); return this;
+        }
+        public Builder<T, ID> prefix(String name, Function<T, String> extractor, TextStrategy... strategies) {
+            root.prefix(name, extractor, strategies); return this;
+        }
+        public Builder<T, ID> prefix(Getter<T, String> getter, TextStrategy... strategies) {
+            root.prefix(getter, strategies); return this;
         }
         public <V> Builder<T, ID> exact(String name, Function<T, V> extractor) {
             root.exact(name, extractor); return this;
@@ -251,6 +284,23 @@ public final class SearchSpecification<T, ID> {
         public PathBuilder<ROOT, CURRENT> prefix(String name, Function<CURRENT, String> extractor) {
             scalar(name, IndexKind.PREFIX, extractor); return this;
         }
+        public PathBuilder<ROOT, CURRENT> prefix(String property, TextStrategy... strategies) {
+            String name = property(property);
+            return text(name, current -> PropertyAccess.read(current, name), strategies);
+        }
+        public PathBuilder<ROOT, CURRENT> prefix(String name, Function<CURRENT, String> extractor, TextStrategy... strategies) {
+            return text(name, extractor, strategies);
+        }
+        public PathBuilder<ROOT, CURRENT> prefix(Getter<CURRENT, String> getter, TextStrategy... strategies) {
+            return text(Getters.name(getter), getter, strategies);
+        }
+        private PathBuilder<ROOT, CURRENT> text(String name, Function<CURRENT, ?> extractor, TextStrategy... strategies) {
+            Objects.requireNonNull(extractor);
+            leaf(name, IndexKind.PREFIX, false, null, false, current -> Collections.singletonList(extractor.apply(current)));
+            String fullPath = child(name);
+            dimensions.put(fullPath, dimensions.get(fullPath).withStrategies(strategies));
+            return this;
+        }
         public PathBuilder<ROOT, CURRENT> prefixSplit(String property) {
             return prefixSplit(property, Split.WHITESPACE);
         }
@@ -268,10 +318,7 @@ public final class SearchSpecification<T, ID> {
             return split(Getters.name(getter), getter, split);
         }
         private PathBuilder<ROOT, CURRENT> split(String name, Function<CURRENT, ?> extractor, Split split) {
-            Objects.requireNonNull(extractor);
-            Objects.requireNonNull(split);
-            leaf(name, IndexKind.PREFIX, false, split, false, current -> Collections.singletonList(extractor.apply(current)));
-            return this;
+            return text(name, extractor, TextStrategy.split(Objects.requireNonNull(split)));
         }
         public PathBuilder<ROOT, CURRENT> prefixContains(String property) {
             String name = property(property);
@@ -284,9 +331,7 @@ public final class SearchSpecification<T, ID> {
             return contains(Getters.name(getter), getter);
         }
         private PathBuilder<ROOT, CURRENT> contains(String name, Function<CURRENT, ?> extractor) {
-            Objects.requireNonNull(extractor);
-            leaf(name, IndexKind.PREFIX, false, null, true, current -> Collections.singletonList(extractor.apply(current)));
-            return this;
+            return text(name, extractor, TextStrategy.contains());
         }
         public <V> PathBuilder<ROOT, CURRENT> exact(String name, Function<CURRENT, V> extractor) {
             scalar(name, IndexKind.EXACT, extractor); return this;
