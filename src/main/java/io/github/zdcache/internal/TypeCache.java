@@ -3,12 +3,15 @@ package io.github.zdcache.internal;
 import io.github.zdcache.ConflictingSearchSpecificationException;
 import io.github.zdcache.IdentityDimension;
 import io.github.zdcache.ImmutableIdentityDimensionException;
+import io.github.zdcache.Match;
 import io.github.zdcache.MissingSearchSpecificationStrategyException;
+import io.github.zdcache.Ranked;
 import io.github.zdcache.SearchSpecification;
 import io.github.zdcache.store.IdentityStore;
 import io.github.zdcache.store.IndexedEntry;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -226,6 +229,11 @@ public final class TypeCache<T, ID> {
                 throw new MissingSearchSpecificationStrategyException(specification.type());
             }
             DimensionRegistry<T, ID> registry = indexes;
+            if (values != null && values.length == 1 && values[0] instanceof Match.Words) {
+                List<S> found = new ArrayList<>();
+                for (Ranked<S> ranked : ranked(registry, view, dimension, values)) found.add(ranked.result());
+                return Collections.unmodifiableList(found);
+            }
             Set<IndexedEntry<T>> seen = registry.multiValued(dimension)
                 ? Collections.newSetFromMap(new IdentityHashMap<>()) : null;
             List<S> found = new ArrayList<>();
@@ -236,6 +244,29 @@ public final class TypeCache<T, ID> {
             });
             return Collections.unmodifiableList(found);
         } finally { read.unlock(); }
+    }
+
+    public <S> List<Ranked<S>> searchRanked(Class<S> view, String dimension, Object... values) {
+        read.lock();
+        try {
+            if (!specification.searchable()) {
+                throw new MissingSearchSpecificationStrategyException(specification.type());
+            }
+            return Collections.unmodifiableList(ranked(indexes, view, dimension, values));
+        } finally { read.unlock(); }
+    }
+
+    private <S> List<Ranked<S>> ranked(DimensionRegistry<T, ID> registry, Class<S> view, String dimension, Object... values) {
+        registry.requireRankable(dimension);
+        Set<IndexedEntry<T>> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        List<Ranked<S>> found = new ArrayList<>();
+        registry.forEachMatch(dimension, values, entry -> {
+            if (entry.evicted() || !seen.add(entry)) return;
+            T entity = entry.entity();
+            if (view.isInstance(entity)) found.add(new Ranked<>(view.cast(entity), registry.rank(dimension, values, entity)));
+        });
+        found.sort(Comparator.comparing(Ranked::rankLevel));
+        return found;
     }
 
     /** Rebuild all dimensions atomically. Never replace the registered identity instance. */

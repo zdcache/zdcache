@@ -2,6 +2,7 @@ package io.github.zdcache.internal;
 
 import io.github.zdcache.IndexKind;
 import io.github.zdcache.Match;
+import io.github.zdcache.RankLevel;
 import io.github.zdcache.SearchDimension;
 import io.github.zdcache.SearchSpecification;
 import io.github.zdcache.Split;
@@ -18,13 +19,16 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 public final class DimensionRegistry<T, ID> {
     private static final Object[] NO_VALUES = new Object[0];
+    private static final Pattern SPACES = Pattern.compile("\\s+");
 
     private record Many(Object[] values) {}
 
@@ -192,6 +196,44 @@ public final class DimensionRegistry<T, ID> {
             found = matching;
         }
         found.forEach(action);
+    }
+
+    public void requireRankable(String path) {
+        SearchDimension<T> dimension = dimensions.get(position(path));
+        if (dimension.kind() != IndexKind.PREFIX)
+            throw new IllegalArgumentException("Only text dimensions are ranked, and '" + path + "' of " + specification.type().getName()
+                + " is " + dimension.kind());
+    }
+
+    public RankLevel rank(String path, Object[] values, T entity) {
+        SearchDimension<T> dimension = dimensions.get(position(path));
+        Object query = values[0];
+        String text = query instanceof Match match ? match.text() : (String) query;
+        Split split = dimension.split() == null ? Split.WHITESPACE : dimension.split();
+        RankLevel best = RankLevel.WORDS_IN_ANY_ORDER;
+        for (Object value : dimension.values(entity)) {
+            RankLevel level = rank((String) value, text, split);
+            if (level.compareTo(best) < 0) best = level;
+        }
+        return best;
+    }
+
+    private static RankLevel rank(String value, String query, Split split) {
+        String whole = normalized(value), wanted = normalized(query);
+        if (whole.equals(wanted)) return RankLevel.EXACT;
+        if (whole.startsWith(wanted)) return RankLevel.STARTS_WITH;
+        List<String> words = List.copyOf(split.words(value));
+        int next = 0;
+        for (String word : split.words(query)) {
+            while (next < words.size() && !words.get(next).startsWith(word)) next++;
+            if (next == words.size()) return RankLevel.WORDS_IN_ANY_ORDER;
+            next++;
+        }
+        return RankLevel.WORDS_IN_ORDER;
+    }
+
+    private static String normalized(String text) {
+        return SPACES.matcher(text.strip()).replaceAll(" ").toLowerCase(Locale.ROOT);
     }
 
     private UndeclaredSearchStrategyException undeclared(String path, String strategy, String declaration) {
