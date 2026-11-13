@@ -3,12 +3,16 @@ package io.github.zdcache.internal;
 import io.github.zdcache.ConflictingSearchSpecificationException;
 import io.github.zdcache.IdentityDimension;
 import io.github.zdcache.ImmutableIdentityDimensionException;
+import io.github.zdcache.Match;
 import io.github.zdcache.MissingSearchSpecificationStrategyException;
+import io.github.zdcache.PreparedSpecification;
+import io.github.zdcache.Ranked;
 import io.github.zdcache.SearchSpecification;
 import io.github.zdcache.store.IdentityStore;
 import io.github.zdcache.store.IndexedEntry;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -29,6 +33,7 @@ public final class TypeCache<T, ID> {
     private volatile long version;
     private volatile SearchSpecification<T, ID> specification;
     private volatile DimensionRegistry<T, ID> indexes;
+    private Preparation pending;
 
     public TypeCache(SearchSpecification<T, ID> spec, IdentityStore<ID, T> store, ReentrantReadWriteLock lock,
                      boolean entryPerId) {
@@ -176,6 +181,10 @@ public final class TypeCache<T, ID> {
         try {
             if (view.isAssignableFrom(specification.type())) {
                 store.clear();
+                if (pending != null) {
+                    pending.abandoned = "This specification change was abandoned because the cache was cleared";
+                    pending = null;
+                }
                 indexes = new DimensionRegistry<>(specification);
                 return;
             }
@@ -222,10 +231,28 @@ public final class TypeCache<T, ID> {
     public <S> List<S> search(Class<S> view, String dimension, Object... values) {
         read.lock();
         try {
+            return searching(view, dimension, values);
+        } catch (io.github.zdcache.UnknownSearchDimensionException | io.github.zdcache.UndeclaredSearchStrategyException e) {
+            throw notReadyOr(e, dimension, values);
+        } finally { read.unlock(); }
+    }
+
+    private RuntimeException notReadyOr(RuntimeException e, String dimension, Object[] values) {
+        Preparation preparing = pending;
+        return preparing != null && preparing.next.builds(dimension, values)
+            ? new io.github.zdcache.SearchDimensionNotReadyException(specification.type(), dimension) : e;
+    }
+
+    private <S> List<S> searching(Class<S> view, String dimension, Object... values) {
             if (!specification.searchable()) {
                 throw new MissingSearchSpecificationStrategyException(specification.type());
             }
             DimensionRegistry<T, ID> registry = indexes;
+            if (values != null && values.length == 1 && (values[0] instanceof Match.Words || values[0] instanceof Match.Fuzzy || values[0] instanceof Match.Contains)) {
+                List<S> found = new ArrayList<>();
+                for (Ranked<S> ranked : ranked(registry, view, dimension, values)) found.add(ranked.result());
+                return Collections.unmodifiableList(found);
+            }
             Set<IndexedEntry<T>> seen = registry.multiValued(dimension)
                 ? Collections.newSetFromMap(new IdentityHashMap<>()) : null;
             List<S> found = new ArrayList<>();
@@ -235,32 +262,134 @@ public final class TypeCache<T, ID> {
                 if (view.isInstance(entity)) found.add(view.cast(entity));
             });
             return Collections.unmodifiableList(found);
+    }
+
+    public <S> List<Ranked<S>> searchRanked(Class<S> view, String dimension, Object... values) {
+        read.lock();
+        try {
+            if (!specification.searchable()) {
+                throw new MissingSearchSpecificationStrategyException(specification.type());
+            }
+            return Collections.unmodifiableList(ranked(indexes, view, dimension, values));
+        } catch (io.github.zdcache.UnknownSearchDimensionException | io.github.zdcache.UndeclaredSearchStrategyException e) {
+            throw notReadyOr(e, dimension, values);
         } finally { read.unlock(); }
+    }
+
+    private <S> List<Ranked<S>> ranked(DimensionRegistry<T, ID> registry, Class<S> view, String dimension, Object... values) {
+        boolean checksItsDimension = values != null && values.length == 1 && (values[0] instanceof Match.Words || values[0] instanceof Match.Fuzzy || values[0] instanceof Match.Contains);
+        if (!checksItsDimension) registry.requireRankable(dimension);
+        Set<IndexedEntry<T>> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        List<Ranked<S>> found = new ArrayList<>();
+        List<Ranker<T>> ranker = new ArrayList<>(1);
+        registry.forEachMatch(dimension, values, entry -> {
+            if (entry.evicted() || !seen.add(entry)) return;
+            T entity = entry.entity();
+            if (!view.isInstance(entity)) return;
+            if (ranker.isEmpty()) ranker.add(registry.ranker(dimension, values));
+            found.add(new Ranked<>(view.cast(entity), ranker.getFirst().rank(entity)));
+        });
+        found.sort(Comparator.comparing(Ranked::rankLevel));
+        return found;
     }
 
     /** Rebuild all dimensions atomically. Never replace the registered identity instance. */
     public void updateSpecification(SearchSpecification<T, ID> nextSpecification) {
+        prepare(nextSpecification).commit();
+    }
+
+    public PreparedSpecification prepare(SearchSpecification<T, ID> nextSpecification) {
+        Preparation preparation;
+        Map<ID, IndexedEntry<T>> entries;
         write.lock();
         try {
             if (nextSpecification.identity() != specification.identity()) {
                 throw new ImmutableIdentityDimensionException(specification.type());
             }
+            if (pending != null) throw new IllegalStateException("A specification change for " + specification.type().getName() + " is already being prepared");
             store.settle();
             applyEvictions();
-            DimensionRegistry<T, ID> rebuilt = new DimensionRegistry<>(nextSpecification);
-            Map<ID, Object[]> snapshots = new HashMap<>();
-            Map<ID, IndexedEntry<T>> entries = store.snapshot();
-            for (var pair : entries.entrySet()) {
-                Object[] newSnapshot = rebuilt.extract(pair.getValue().entity());
-                rebuilt.validate(newSnapshot);
-                rebuilt.add(pair.getValue(), newSnapshot);
-                snapshots.put(pair.getKey(), newSnapshot);
-            }
-            // All potentially throwing extraction/indexing has succeeded; publish under type lock.
-            entries.forEach((id, entry) -> entry.replaceSnapshot(snapshots.get(id)));
-            indexes = rebuilt;
-            specification = nextSpecification;
+            preparation = new Preparation(new DimensionRegistry<>(indexes, nextSpecification), nextSpecification);
+            entries = store.snapshot();
+            pending = preparation;
+            indexes.record(preparation.changes::add);
         } finally { write.unlock(); }
+        try {
+            for (IndexedEntry<T> entry : entries.values()) preparation.build(entry, entry.snapshot());
+        } catch (RuntimeException e) {
+            preparation.abandon();
+            throw e;
+        }
+        write.lock();
+        try { preparation.built = true; } finally { write.unlock(); }
+        return preparation;
+    }
+
+    private final class Preparation implements PreparedSpecification {
+        private final DimensionRegistry<T, ID> next;
+        private final SearchSpecification<T, ID> nextSpecification;
+        private final Map<IndexedEntry<T>, Object[]> snapshots = new IdentityHashMap<>();
+        private final java.util.Queue<DimensionRegistry.Change<T>> changes = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        private boolean built;
+        private String abandoned;
+
+        private Preparation(DimensionRegistry<T, ID> next, SearchSpecification<T, ID> nextSpecification) {
+            this.next = next;
+            this.nextSpecification = nextSpecification;
+        }
+
+        private void build(IndexedEntry<T> entry, Object[] previous) {
+            Object[] snapshot = next.carry(entry, previous);
+            next.addFresh(entry, snapshot);
+            snapshots.put(entry, snapshot);
+        }
+
+        @Override public void commit() {
+            write.lock();
+            try {
+                if (abandoned != null) throw new IllegalStateException(abandoned);
+                if (pending != this || !built) throw new IllegalStateException("This specification change is not being prepared");
+                store.settle();
+                applyEvictions();
+                indexes.record(null);
+                pending = null;
+                abandoned = "This specification change is already committed";
+                for (DimensionRegistry.Change<T> change : changes) {
+                    if (change.added()) {
+                        build(change.entry(), change.snapshot());
+                    } else {
+                        Object[] snapshot = snapshots.remove(change.entry());
+                        next.removeFresh(change.entry(), snapshot != null ? snapshot : next.carry(change.entry(), change.snapshot()));
+                    }
+                }
+                Set<IndexedEntry<T>> live = Collections.newSetFromMap(new IdentityHashMap<>());
+                live.addAll(store.snapshot().values());
+                for (var stale = snapshots.entrySet().iterator(); stale.hasNext(); ) {
+                    var built = stale.next();
+                    if (live.contains(built.getKey())) continue;
+                    next.removeFresh(built.getKey(), built.getValue());
+                    stale.remove();
+                }
+                for (IndexedEntry<T> entry : live) if (!snapshots.containsKey(entry)) build(entry, entry.snapshot());
+                for (IndexedEntry<T> entry : live) entry.replaceSnapshot(snapshots.get(entry));
+                indexes = next;
+                specification = nextSpecification;
+            } catch (RuntimeException e) {
+                abandoned = "This specification change failed: " + e.getMessage();
+                throw e;
+            } finally { write.unlock(); }
+        }
+
+        @Override public void abandon() {
+            write.lock();
+            try {
+                if (pending == this) {
+                    indexes.record(null);
+                    pending = null;
+                }
+                if (abandoned == null) abandoned = "This specification change was abandoned";
+            } finally { write.unlock(); }
+        }
     }
 
     public int size() {

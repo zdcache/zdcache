@@ -150,4 +150,49 @@ class PrefixTrieIndexTest {
         index.remove(1, "");
         assertTrue(index.isEmpty());
     }
+
+    private static Set<Integer> within(PrefixTrieIndex<Integer> index, String query, int maxEdits) {
+        Set<Integer> ids = new HashSet<>();
+        index.forEachWithin(query, maxEdits, ids::add);
+        return ids;
+    }
+
+    @Test void findsValuesWithinTheAllowedEdits() {
+        var index = new PrefixTrieIndex<Integer>();
+        index.add(1, "Andersen");
+        index.add(2, "Andresen");
+        index.add(3, "Anderson");
+        index.add(4, "Hansen");
+        index.add(5, "Ander");
+        assertEquals(Set.of(1), within(index, "andersen", 0));
+        assertEquals(Set.of(1, 2, 3), within(index, "ANDERSEN", 1));
+        assertEquals(Set.of(1, 2, 3), within(index, "andersen", 2));
+        assertEquals(Set.of(5), within(index, "andr", 1));
+        assertEquals(Set.of(), within(index, "", 2));
+    }
+
+    @Test void theWalkFindsExactlyWhatComparingEveryValueFinds() {
+        Random random = new Random(42);
+        var index = new PrefixTrieIndex<Integer>();
+        Map<Integer, String> values = new HashMap<>();
+        for (int id = 0; id < 400; id++) {
+            String value = word(random);
+            values.put(id, value);
+            index.add(id, value);
+        }
+        for (int id = 0; id < 400; id += 3) index.remove(id, values.remove(id));
+        for (int round = 0; round < 300; round++) {
+            String query = word(random);
+            int maxEdits = random.nextInt(3);
+            Set<Integer> expected = new HashSet<>();
+            values.forEach((id, value) -> { if (EditDistance.between(value, query) <= maxEdits) expected.add(id); });
+            assertEquals(expected, within(index, query, maxEdits), query + " within " + maxEdits);
+        }
+    }
+
+    private static String word(Random random) {
+        StringBuilder word = new StringBuilder();
+        for (int i = random.nextInt(7); i > 0; i--) word.append("abcd".charAt(random.nextInt(4)));
+        return word.toString();
+    }
 }

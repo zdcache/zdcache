@@ -1,19 +1,25 @@
 package io.github.zdcache.internal;
 
 import io.github.zdcache.IndexKind;
+import io.github.zdcache.Match;
 import io.github.zdcache.SearchDimension;
 import io.github.zdcache.SearchSpecification;
+import io.github.zdcache.Split;
+import io.github.zdcache.UndeclaredSearchStrategyException;
 import io.github.zdcache.ValueRange;
 import io.github.zdcache.index.CompoundIndex;
 import io.github.zdcache.index.DimensionIndex;
 import io.github.zdcache.index.ExactIndex;
 import io.github.zdcache.index.PrefixTrieIndex;
 import io.github.zdcache.index.RangeIndex;
+import io.github.zdcache.index.TrigramIndex;
 import io.github.zdcache.store.IndexedEntry;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -27,33 +33,137 @@ public final class DimensionRegistry<T, ID> {
     private final SearchSpecification<T, ID> specification;
     private final List<SearchDimension<T>> dimensions;
     private final List<DimensionIndex<IndexedEntry<T>>> indexes = new ArrayList<>();
+    private final List<PrefixTrieIndex<IndexedEntry<T>>> words = new ArrayList<>();
+    private final List<TrigramIndex<IndexedEntry<T>>> trigrams = new ArrayList<>();
     private final Map<String, Integer> positions = new HashMap<>();
+    private final int[] carriedFrom;
+    private final boolean[] freshIndex;
+    private final boolean[] freshWords;
+    private final boolean[] freshTrigrams;
+    private Consumer<Change<T>> recorder;
+
+    public record Change<T>(boolean added, IndexedEntry<T> entry, Object[] snapshot) {}
 
     public DimensionRegistry(SearchSpecification<T, ID> specification) {
         this.specification = specification;
         this.dimensions = specification.dimensions();
+        carriedFrom = new int[dimensions.size()];
+        freshIndex = new boolean[dimensions.size()];
+        freshWords = new boolean[dimensions.size()];
+        freshTrigrams = new boolean[dimensions.size()];
         for (SearchDimension<T> dimension : dimensions) {
             positions.put(dimension.path(), indexes.size());
-            indexes.add(switch (dimension.kind()) {
-                case PREFIX -> new PrefixTrieIndex<>();
-                case EXACT -> new ExactIndex<>();
-                case RANGE -> new RangeIndex<>();
-                case COMPOUND -> new CompoundIndex<>(dimension.parts().getLast().kind());
-            });
+            indexes.add(index(dimension));
+            words.add(dimension.split() == null ? null : new PrefixTrieIndex<>());
+            trigrams.add(dimension.contains() ? new TrigramIndex<>() : null);
         }
+    }
+
+    public DimensionRegistry(DimensionRegistry<T, ID> current, SearchSpecification<T, ID> next) {
+        this.specification = next;
+        this.dimensions = next.dimensions();
+        carriedFrom = new int[dimensions.size()];
+        freshIndex = new boolean[dimensions.size()];
+        freshWords = new boolean[dimensions.size()];
+        freshTrigrams = new boolean[dimensions.size()];
+        for (int i = 0; i < dimensions.size(); i++) {
+            SearchDimension<T> dimension = dimensions.get(i);
+            positions.put(dimension.path(), i);
+            Integer before = current.positions.get(dimension.path());
+            SearchDimension<T> previous = before == null ? null : current.dimensions.get(before);
+            boolean kept = previous != null && previous.extractsLike(dimension);
+            carriedFrom[i] = kept ? before : -1;
+            freshIndex[i] = !kept;
+            indexes.add(kept ? current.indexes.get(before) : index(dimension));
+            boolean sameSplit = kept && previous.split() == dimension.split();
+            freshWords[i] = dimension.split() != null && !sameSplit;
+            words.add(dimension.split() == null ? null : sameSplit ? current.words.get(before) : new PrefixTrieIndex<>());
+            boolean sameContains = kept && previous.contains();
+            freshTrigrams[i] = dimension.contains() && !sameContains;
+            trigrams.add(!dimension.contains() ? null : sameContains ? current.trigrams.get(before) : new TrigramIndex<>());
+        }
+    }
+
+    private static <T> DimensionIndex<IndexedEntry<T>> index(SearchDimension<T> dimension) {
+        return switch (dimension.kind()) {
+            case PREFIX -> new PrefixTrieIndex<>();
+            case EXACT -> new ExactIndex<>();
+            case RANGE -> new RangeIndex<>();
+            case COMPOUND -> new CompoundIndex<>(dimension.parts().getLast().kind());
+        };
+    }
+
+    public void record(Consumer<Change<T>> recorder) { this.recorder = recorder; }
+
+    public boolean builds(String path, Object[] values) {
+        Integer position = positions.get(path);
+        if (position == null) return false;
+        if (freshIndex[position]) return true;
+        Object query = values != null && values.length == 1 ? values[0] : null;
+        return query instanceof Match.Words && freshWords[position] || query instanceof Match.Contains && freshTrigrams[position];
+    }
+
+    private Set<String> words(int position, Object slot) {
+        Split split = dimensions.get(position).split();
+        Set<String> all = new LinkedHashSet<>();
+        for (Object value : values(slot)) all.addAll(split.words((String) value));
+        return all;
+    }
+
+    private void addTo(int position, IndexedEntry<T> entry, Object slot, boolean index, boolean wordIndex, boolean trigramIndex) {
+        if (index) for (Object value : values(slot)) indexes.get(position).add(entry, value);
+        if (wordIndex && words.get(position) != null) for (String word : words(position, slot)) words.get(position).add(entry, word);
+        if (trigramIndex && trigrams.get(position) != null) for (Object value : values(slot)) trigrams.get(position).add(entry, value);
+    }
+
+    private void removeFrom(int position, IndexedEntry<T> entry, Object slot, boolean index, boolean wordIndex, boolean trigramIndex) {
+        if (index) for (Object value : values(slot)) indexes.get(position).remove(entry, value);
+        if (wordIndex && words.get(position) != null) for (String word : words(position, slot)) words.get(position).remove(entry, word);
+        if (trigramIndex && trigrams.get(position) != null) for (Object value : values(slot)) trigrams.get(position).remove(entry, value);
+    }
+
+    private void addWords(int position, IndexedEntry<T> entry, Object slot) {
+        addTo(position, entry, slot, false, true, true);
+    }
+
+    private void removeWords(int position, IndexedEntry<T> entry, Object slot) {
+        removeFrom(position, entry, slot, false, true, true);
+    }
+
+    public Object[] carry(IndexedEntry<T> entry, Object[] previous) {
+        Object[] snapshot = new Object[dimensions.size()];
+        for (int i = 0; i < snapshot.length; i++) {
+            if (carriedFrom[i] >= 0) {
+                snapshot[i] = previous[carriedFrom[i]];
+            } else {
+                snapshot[i] = slot(i, entry.entity());
+                validate(i, snapshot[i]);
+            }
+        }
+        return snapshot;
+    }
+
+    public void addFresh(IndexedEntry<T> entry, Object[] snapshot) {
+        for (int i = 0; i < snapshot.length; i++) addTo(i, entry, snapshot[i], freshIndex[i], freshWords[i], freshTrigrams[i]);
+    }
+
+    public void removeFresh(IndexedEntry<T> entry, Object[] snapshot) {
+        for (int i = 0; i < snapshot.length; i++) removeFrom(i, entry, snapshot[i], freshIndex[i], freshWords[i], freshTrigrams[i]);
+    }
+
+    private Object slot(int position, T entity) {
+        Set<Object> values = dimensions.get(position).values(entity);
+        return switch (values.size()) {
+            case 0 -> null;
+            case 1 -> values.iterator().next();
+            default -> new Many(values.toArray());
+        };
     }
 
     public Object[] extract(T entity) {
         if (dimensions.isEmpty()) return NO_VALUES;
         Object[] snapshot = new Object[dimensions.size()];
-        for (int i = 0; i < snapshot.length; i++) {
-            Set<Object> values = dimensions.get(i).values(entity);
-            snapshot[i] = switch (values.size()) {
-                case 0 -> null;
-                case 1 -> values.iterator().next();
-                default -> new Many(values.toArray());
-            };
-        }
+        for (int i = 0; i < snapshot.length; i++) snapshot[i] = slot(i, entity);
         return snapshot;
     }
 
@@ -63,23 +173,30 @@ public final class DimensionRegistry<T, ID> {
     }
 
     public void validate(Object[] snapshot) {
-        for (int i = 0; i < snapshot.length; i++) {
-            DimensionIndex<IndexedEntry<T>> index = indexes.get(i);
-            Object first = null;
-            for (Object value : values(snapshot[i])) {
-                index.validate(value);
-                // An empty RANGE index still needs homogeneous keys within a single PUT.
-                if (index instanceof RangeIndex<?> && first != null) {
-                    @SuppressWarnings("unchecked")
-                    Comparable<Object> next = (Comparable<Object>) value;
-                    next.compareTo(first);
-                }
-                if (first == null) first = value;
+        for (int i = 0; i < snapshot.length; i++) validate(i, snapshot[i]);
+    }
+
+    private void validate(int position, Object slot) {
+        DimensionIndex<IndexedEntry<T>> index = indexes.get(position);
+        Object first = null;
+        for (Object value : values(slot)) {
+            index.validate(value);
+            // An empty RANGE index still needs homogeneous keys within a single PUT.
+            if (index instanceof RangeIndex<?> && first != null) {
+                @SuppressWarnings("unchecked")
+                Comparable<Object> next = (Comparable<Object>) value;
+                next.compareTo(first);
             }
+            if (first == null) first = value;
         }
     }
 
     public void add(IndexedEntry<T> entry, Object[] snapshot) {
+        if (recorder != null) recorder.accept(new Change<>(true, entry, snapshot));
+        applyAdd(entry, snapshot);
+    }
+
+    private void applyAdd(IndexedEntry<T> entry, Object[] snapshot) {
         for (int i = 0; i < snapshot.length; i++) {
             Object slot = snapshot[i];
             if (slot instanceof Many many) {
@@ -87,10 +204,16 @@ public final class DimensionRegistry<T, ID> {
             } else if (slot != null) {
                 indexes.get(i).add(entry, slot);
             }
+            addWords(i, entry, slot);
         }
     }
 
     public void remove(IndexedEntry<T> entry, Object[] snapshot) {
+        if (recorder != null) recorder.accept(new Change<>(false, entry, snapshot));
+        applyRemove(entry, snapshot);
+    }
+
+    private void applyRemove(IndexedEntry<T> entry, Object[] snapshot) {
         for (int i = 0; i < snapshot.length; i++) {
             Object slot = snapshot[i];
             if (slot instanceof Many many) {
@@ -98,13 +221,18 @@ public final class DimensionRegistry<T, ID> {
             } else if (slot != null) {
                 indexes.get(i).remove(entry, slot);
             }
+            removeWords(i, entry, slot);
         }
     }
 
     public void replace(IndexedEntry<T> previous, Object[] before, IndexedEntry<T> entry, Object[] after) {
+        if (recorder != null) {
+            recorder.accept(new Change<>(false, previous, before));
+            recorder.accept(new Change<>(true, entry, after));
+        }
         if (before.length != after.length) {
-            remove(previous, before);
-            add(entry, after);
+            applyRemove(previous, before);
+            applyAdd(entry, after);
             return;
         }
         for (int i = 0; i < after.length; i++) {
@@ -116,7 +244,13 @@ public final class DimensionRegistry<T, ID> {
                 } else if (after[i] != null) {
                     index.replace(previous, entry, after[i]);
                 }
+                PrefixTrieIndex<IndexedEntry<T>> wordIndex = words.get(i);
+                if (wordIndex != null) for (String word : words(i, after[i])) wordIndex.replace(previous, entry, word);
+                TrigramIndex<IndexedEntry<T>> pieces = trigrams.get(i);
+                if (pieces != null) for (Object value : values(after[i])) pieces.replace(previous, entry, value);
             } else {
+                removeWords(i, previous, before[i]);
+                addWords(i, entry, after[i]);
                 if (before[i] instanceof Many many) {
                     for (Object value : many.values()) index.remove(previous, value);
                 } else if (before[i] != null) {
@@ -142,7 +276,91 @@ public final class DimensionRegistry<T, ID> {
 
     public void forEachMatch(String path, Object[] values, Consumer<? super IndexedEntry<T>> action) {
         int position = position(path);
+        if (values != null && values.length == 1 && values[0] instanceof Match.Words query) {
+            matchWords(position, query, action);
+            return;
+        }
+        if (values != null && values.length == 1 && values[0] instanceof Match.Fuzzy query) {
+            matchFuzzy(position, query, action);
+            return;
+        }
+        if (values != null && values.length == 1 && values[0] instanceof Match.Contains query) {
+            matchContains(position, query, action);
+            return;
+        }
         indexes.get(position).forEachMatch(query(dimensions.get(position), values), action);
+    }
+
+    private void matchWords(int position, Match.Words query, Consumer<? super IndexedEntry<T>> action) {
+        SearchDimension<T> dimension = dimensions.get(position);
+        if (dimension.split() == null) throw undeclared(dimension.path(), "words", "prefixSplit");
+        Set<String> wanted = dimension.split().words(query.text());
+        if (wanted.isEmpty()) throw new IllegalArgumentException("A words search on " + dimension.path() + " needs at least one word");
+        Set<IndexedEntry<T>> found = null;
+        for (String word : wanted) {
+            Set<IndexedEntry<T>> previous = found;
+            Set<IndexedEntry<T>> matching = new LinkedHashSet<>();
+            words.get(position).forEachMatch(word, entry -> { if (previous == null || previous.contains(entry)) matching.add(entry); });
+            if (matching.isEmpty()) return;
+            found = matching;
+        }
+        found.forEach(action);
+    }
+
+    public void requireRankable(String path) {
+        SearchDimension<T> dimension = dimensions.get(position(path));
+        if (dimension.kind() != IndexKind.PREFIX)
+            throw new IllegalArgumentException("Only text dimensions are ranked, and '" + path + "' of " + specification.type().getName()
+                + " is " + dimension.kind());
+    }
+
+    public Ranker<T> ranker(String path, Object[] values) {
+        return new Ranker<>(dimensions.get(position(path)), values[0]);
+    }
+
+    private void matchFuzzy(int position, Match.Fuzzy query, Consumer<? super IndexedEntry<T>> action) {
+        SearchDimension<T> dimension = dimensions.get(position);
+        if (dimension.kind() != IndexKind.PREFIX) throw undeclared(dimension.path(), "fuzzy", "prefix or prefixSplit");
+        if (dimension.split() == null) {
+            String text = query.text().toLowerCase(Locale.ROOT);
+            Set<IndexedEntry<T>> found = new LinkedHashSet<>();
+            ((PrefixTrieIndex<IndexedEntry<T>>) indexes.get(position)).forEachWithin(text, query.editsFor(text), found::add);
+            found.forEach(action);
+            return;
+        }
+        Set<String> wanted = dimension.split().words(query.text());
+        if (wanted.isEmpty()) throw new IllegalArgumentException("A fuzzy search on " + dimension.path() + " needs at least one word");
+        Set<IndexedEntry<T>> found = null;
+        for (String word : wanted) {
+            Set<IndexedEntry<T>> previous = found;
+            Set<IndexedEntry<T>> matching = new LinkedHashSet<>();
+            words.get(position).forEachWithin(word, query.editsFor(word), entry -> { if (previous == null || previous.contains(entry)) matching.add(entry); });
+            if (matching.isEmpty()) return;
+            found = matching;
+        }
+        found.forEach(action);
+    }
+
+    private void matchContains(int position, Match.Contains query, Consumer<? super IndexedEntry<T>> action) {
+        SearchDimension<T> dimension = dimensions.get(position);
+        if (!dimension.contains()) throw undeclared(dimension.path(), "contains", "prefixContains");
+        String wanted = query.text().toLowerCase(Locale.ROOT);
+        if (wanted.isEmpty()) throw new IllegalArgumentException("A contains search on " + dimension.path() + " needs at least one character");
+        Set<IndexedEntry<T>> candidates = new LinkedHashSet<>();
+        if (wanted.length() >= TrigramIndex.LENGTH) trigrams.get(position).forEachMatch(wanted, candidates::add);
+        else indexes.get(position).forEachMatch("", candidates::add);
+        for (IndexedEntry<T> candidate : candidates) {
+            for (Object value : dimension.values(candidate.entity())) {
+                if (((String) value).toLowerCase(Locale.ROOT).contains(wanted)) {
+                    action.accept(candidate);
+                    break;
+                }
+            }
+        }
+    }
+
+    private UndeclaredSearchStrategyException undeclared(String path, String strategy, String declaration) {
+        return new UndeclaredSearchStrategyException(specification.type(), path, strategy, declaration);
     }
 
     private int position(String path) {
@@ -151,7 +369,7 @@ public final class DimensionRegistry<T, ID> {
         return position;
     }
 
-    private static Object query(SearchDimension<?> dimension, Object[] values) {
+    private Object query(SearchDimension<?> dimension, Object[] values) {
         String path = dimension.path();
         if (dimension.kind() != IndexKind.COMPOUND) {
             if (values == null || values.length != 1) {
@@ -174,8 +392,15 @@ public final class DimensionRegistry<T, ID> {
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static Object queryValue(String path, IndexKind kind, Object value) {
+    private Object queryValue(String path, IndexKind kind, Object value) {
         if (value == null) throw new IllegalArgumentException("Search value for " + path + " must not be null");
+        if (value instanceof Match.Words) throw undeclared(path, "words", "prefixSplit");
+        if (value instanceof Match.Fuzzy) throw undeclared(path, "fuzzy", "prefix or prefixSplit on a dimension of its own");
+        if (value instanceof Match.Contains) throw undeclared(path, "contains", "prefixContains on a dimension of its own");
+        if (value instanceof Match.Prefix prefix) {
+            if (kind != IndexKind.PREFIX) throw undeclared(path, "prefix", "prefix");
+            value = prefix.text();
+        }
         switch (kind) {
             case PREFIX -> {
                 if (!(value instanceof String)) {

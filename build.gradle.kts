@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "io.github.zdcache"
-version = "0.3.2-SNAPSHOT"
+version = "0.4.0"
 description = "ZDCache: an in-process, multi-type cache searchable along specification-defined dimensions."
 
 repositories {
@@ -100,6 +100,16 @@ fun registerFootprint(name: String, directory: String, describedAs: String, vara
 registerFootprint("footprint", "footprint", "Measures heap bytes per cached entry for zdcache and the other libraries.")
 registerFootprint("footprintCompact", "footprint-compact",
     "Measures heap bytes per cached entry with compact object headers.", "-XX:+UseCompactObjectHeaders")
+
+tasks.register<JavaExec>("textFootprint") {
+    description = "Measures heap bytes per cached entry for a name dimension declared with prefix, prefixSplit and prefixContains."
+    group = "verification"
+    classpath = jmh.runtimeClasspath
+    mainClass = "io.github.zdcache.bench.TextFootprint"
+    javaLauncher = benchmarkJava
+    maxHeapSize = "2g"
+    jvmArgs("-Djdk.attach.allowAttachSelf=true", "-Djol.magicFieldOffset=true")
+}
 
 mavenPublishing {
     publishToMavenCentral()

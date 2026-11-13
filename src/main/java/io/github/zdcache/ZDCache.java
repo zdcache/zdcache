@@ -403,6 +403,40 @@ public final class ZDCache {
         return cache.search(type, dimension, values);
     }
 
+    public <T> List<Ranked<T>> searchRanked(Getter<T, ?> dimension, Object... values) {
+        return searchRanked(Getters.<T>type(dimension), Getters.name(dimension), values);
+    }
+
+    public <T, A> List<Ranked<T>> searchRanked(Getter<T, ? extends Iterable<A>> first, Getter<A, ?> second, Object... values) {
+        return searchRanked(Getters.<T>type(first), path(first, second), values);
+    }
+
+    public <T, A, B> List<Ranked<T>> searchRanked(Getter<T, ? extends Iterable<A>> first, Getter<A, ? extends Iterable<B>> second,
+                                                  Getter<B, ?> third, Object... values) {
+        return searchRanked(Getters.<T>type(first), path(first, second, third), values);
+    }
+
+    public <T, A, B, C> List<Ranked<T>> searchRanked(Getter<T, ? extends Iterable<A>> first, Getter<A, ? extends Iterable<B>> second,
+                                                     Getter<B, ? extends Iterable<C>> third, Getter<C, ?> fourth, Object... values) {
+        return searchRanked(Getters.<T>type(first), path(first, second, third, fourth), values);
+    }
+
+    public <T, A, B, C, D> List<Ranked<T>> searchRanked(Getter<T, ? extends Iterable<A>> first, Getter<A, ? extends Iterable<B>> second,
+                                                        Getter<B, ? extends Iterable<C>> third, Getter<C, ? extends Iterable<D>> fourth,
+                                                        Getter<D, ?> fifth, Object... values) {
+        return searchRanked(Getters.<T>type(first), path(first, second, third, fourth, fifth), values);
+    }
+
+    public <T> List<Ranked<T>> searchRanked(Class<T> type, Getter<? super T, ?> dimension, Object... values) {
+        return searchRanked(type, Getters.name(dimension), values);
+    }
+
+    public <T> List<Ranked<T>> searchRanked(Class<T> type, String dimension, Object... values) {
+        TypeCache<?, Object> cache = resolve(type);
+        if (cache == null) throw new MissingSearchSpecificationStrategyException(type);
+        return cache.searchRanked(type, dimension, values);
+    }
+
     public <T, ID> void updateSpecification(Class<T> type, SearchSpecification<T, ID> replacement) {
         Objects.requireNonNull(replacement);
         if (replacement.type() != type) {
@@ -411,6 +445,16 @@ public final class ZDCache {
         TypeCache<T, ID> cache = typeCache(type);
         if (cache == null) throw new MissingIdentitySpecificationException(type);
         cache.updateSpecification(replacement);
+    }
+
+    public <T, ID> PreparedSpecification prepareSpecification(Class<T> type, SearchSpecification<T, ID> replacement) {
+        Objects.requireNonNull(replacement);
+        if (replacement.type() != type) {
+            throw new IllegalArgumentException("Type and specification must match");
+        }
+        TypeCache<T, ID> cache = typeCache(type);
+        if (cache == null) throw new MissingIdentitySpecificationException(type);
+        return cache.prepare(replacement);
     }
 
     public <T> SearchSpecification<T, ?> getSpecification(Class<T> type) {
