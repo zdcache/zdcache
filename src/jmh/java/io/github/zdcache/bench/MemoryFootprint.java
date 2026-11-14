@@ -26,6 +26,11 @@ public final class MemoryFootprint {
         Map<String, Map<Integer, Double>> measured = new LinkedHashMap<>();
         for (String subject : KEY_ONLY) measured.put(subject, measure(subject));
         for (String subject : INDEXED) measured.put(subject, measure(subject));
+        for (String subject : TextFootprint.SUBJECTS) {
+            Map<Integer, Double> bySize = new LinkedHashMap<>();
+            for (int size : SIZES) bySize.put(size, TextFootprint.bytesPerEntry(subject, size));
+            measured.put(subject, bySize);
+        }
         List<String> lines = new ArrayList<>() {
             @Override public boolean add(String line) {
                 System.out.println(line);
@@ -43,6 +48,12 @@ public final class MemoryFootprint {
         lines.add(header());
         lines.add(separator());
         for (String subject : INDEXED) lines.add(row(subject, measured.get(subject)));
+        lines.add("");
+        lines.add("A name declared for text search, one dimension.");
+        lines.add("");
+        lines.add(header());
+        lines.add(separator());
+        for (String subject : TextFootprint.SUBJECTS) lines.add(row(subject, measured.get(subject)));
         Path report = Path.of(args.length > 0 ? args[0] : "build/reports/footprint/results.md");
         Files.createDirectories(report.getParent());
         Files.write(report, lines);

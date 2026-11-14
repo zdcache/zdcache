@@ -391,6 +391,85 @@ var spec = SearchSpecification.builder(IdentityDimension.of(Person.class, "id", 
 
 Switch to `recency(Recency.APPROXIMATE)` when profiling shows many threads waiting on the cache.
 
+### Text search
+
+A `prefix` dimension finds text from its start. Three more ways to match text build on it, each chosen per search
+with a `Match`. Two of them need an extra index, declared on the dimension, so you pay memory only for what you use:
+
+| You want | Declare | Search with | Extra memory |
+|---|---|---|---|
+| Names starting with "an" | `prefix(Person::name)` | `"an"` or `Match.prefix("an")` | none |
+| "anna ols" to find "Anna Maria Olsen" | `prefixSplit(Person::name)` | `Match.words("anna ols")` | small |
+| "Andersn" to find "Andersen" | `prefix` or `prefixSplit` | `Match.fuzzy("andersn")` | none |
+| "ders" anywhere in "Andersen" | `prefixContains(Person::name)` | `Match.contains("ders")` | large |
+
+```java
+record Person(long id, String name, String city) {}
+
+var spec = SearchSpecification.builder(IdentityDimension.of(Person::id))
+    .prefix(Person::name, TextStrategy.split(), TextStrategy.contains())   // or prefixSplit / prefixContains alone
+    .exact(Person::city)
+    .build();
+
+cache.search(Person.class, Person::name, "anna");                          // the whole value starts with "anna"
+cache.search(Person.class, Person::name, Match.words("ols anna"));         // every word starts a word, any order
+cache.search(Person.class, Person::name, Match.fuzzy("ana olsne"));        // typos: 1 edit up to 5 letters, 2 beyond
+cache.search(Person.class, Person::name, Match.fuzzy("olsne", 1));         // at most one edit
+cache.search(Person.class, Person::name, Match.contains("lse"));           // anywhere in the value
+cache.searchRanked(Person::name, Match.words("anna olsen"));               // best first, with a RankLevel each
+```
+
+Names split on whitespace by default; `TextStrategy.split(Split.NON_ALPHANUMERIC)` also splits on hyphens and
+punctuation, so "olsen" finds "Kari Hansen-Olsen". Words, fuzzy and contains searches return the best matches
+first: exact, then starting with the query, then words in order, in any order, then one and two edits. A search
+for a strategy the dimension does not declare throws `UndeclaredSearchStrategyException`. To add a strategy to a
+type that is already cached, derive the next specification and update it; writes continue while it is built:
+
+```java
+var current = (SearchSpecification<Person, Long>) cache.getSpecification(Person.class);
+cache.updateSpecification(Person.class, current.withStrategies(Person::name, TextStrategy.split()));
+```
+
+When to use which:
+
+- **`prefixSplit` and `Match.words`** suit names and titles, where people type a first name and the start of a
+  surname. It costs about half a prefix index more and is the one to reach for first.
+- **`Match.fuzzy`** catches typos without any extra index. One edit costs about as much as a words search; two edits
+  two to three times more. Leave the number of edits to the query's length unless you need fewer.
+- **`prefixContains` and `Match.contains`** find text inside words, such as part of a product code. Its index costs
+  about 2.5 times a prefix index, and short queries match many values, so keep it for smaller types or queries of
+  four or more letters. One or two letters look through every value.
+- **`searchRanked`** costs nothing measurable over the same search, so use it whenever the order matters.
+
+Measured on 2026-11-14 on Java 25, one thread, one fork, 3 warm-up and 5 measured iterations, searching names made
+of 50 first names and 60 surnames, a third with a middle name. A query matches a fixed share of the names, so
+results, and with them the times, grow with the size; data with more distinct values gives fewer results and faster
+searches. Time per search:
+
+| Search | 1,000 names | 10,000 | 100,000 |
+|---|---:|---:|---:|
+| `"an"`, plain prefix | 0.57 µs | 3.2 µs | 34 µs |
+| `Match.words`, first name and 3 letters | 1.5 µs | 13 µs | 202 µs |
+| The same with `searchRanked` | 1.4 µs | 13 µs | 187 µs |
+| `Match.fuzzy`, surname with a typo, 1 edit | 6.7 µs | 19 µs | 188 µs |
+| `Match.fuzzy`, surname with a typo, edits by length | 11 µs | 29 µs | 234 µs |
+| `Match.fuzzy`, full name with a typo, 1 edit | 7.7 µs | 21 µs | 329 µs |
+| `Match.fuzzy`, full name with a typo, 2 edits | 17 µs | 64 µs | 584 µs |
+| `Match.contains`, 3–4 letters of a surname | 31 µs | 309 µs | 3.8 ms |
+| `Match.contains`, 2 letters | 119 µs | 1.1 ms | 19 ms |
+
+Memory per entry for one name dimension, excluding the cached objects:
+
+| Declared as | 10,000 names | 100,000 names | Of which the text index |
+|---|---:|---:|---:|
+| No dimension | 119 B | 123 B | – |
+| `prefix` | 258 B | 207 B | 85 B |
+| `prefixSplit` | 305 B | 247 B | 85 + 40 B |
+| `prefixContains` | 479 B | 424 B | 85 + 216 B |
+
+The interactive report has a Text search view with these searches at every size. Run them yourself with
+`./gradlew jmh -Pjmh.args="TextSearchBenchmark"`, and the memory with `./gradlew textFootprint`.
+
 ## Benchmark
 
 There are two sets of benchmarks. The configuration benchmarks run zdcache alone, in every identity store with and without indexes, with `Locking.SINGLE` and with one entry per put, measuring `get`, `put`, `put` inside `atomically` and searches. The library benchmarks compare zdcache's default configuration and approximate recency, each with and without indexes, against Caffeine, cache2k, Guava, Ehcache, a plain `ConcurrentHashMap`, embedded Hazelcast and CQEngine. Both measure single-threaded `get` and `put` and prefix, exact, compound and range searches at 1,000, 3,000, 5,000, 10,000 and 50,000 entries. Four threads reading and writing by key, three threads searching with and without a fourth thread writing now and then, and locking across four types, are measured at 10,000 and 50,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
