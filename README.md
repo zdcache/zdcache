@@ -200,16 +200,19 @@ searchable type raises `UnknownSearchDimensionException`.
   spec instance throws `ConflictingSearchSpecificationException`, even if it was
   built from equivalent lambdas. This intentionally avoids pretending lambdas
   have reliable structural equality.
-- `updateSpecification(type, replacement)` is the *only* specification-changing
-  API. It requires the **same identity-dimension object**, rebuilds *all*
-  dimension indexes from cached entities, and publishes under the per-type lock.
-  Failed extraction/indexing during this rebuild preserves the old specification.
+- `updateSpecification(type, replacement)`, or `prepareSpecification` followed by
+  `commit()`, is the *only* specification-changing API. It requires the **same
+  identity-dimension object**, builds only the indexes the replacement adds from
+  cached entities while writes continue, keeps unchanged dimensions as they are,
+  and publishes in one short step under the per-type lock.
+  Failed extraction/indexing during this build preserves the old specification.
 - Ordinary `put` replaces the entity and removes its old secondary index entries
   using captured index keys. This works even if the old entity was mutated by an
   outside holder. Ordinary changes by reference are not observed until `put()`.
 - `search` returns `List<T>` with unique root entities, read straight from the
   stored entries the indexes reference. Prefix indexing is case-insensitive using
-  `Locale.ROOT`, **starts-with**, not fuzzy matching or substring matching.
+  `Locale.ROOT`, **starts-with**; words, fuzzy and substring searches are chosen
+  with `Match`, on dimensions declared with `prefixSplit` or `prefixContains`.
 - A single root can contribute multiple values to a nested-list dimension.
   Each trie node holds the entries whose value ends there, so removing one root
   leaves prefixes shared with other roots intact.
@@ -584,7 +587,7 @@ Only a full run can be published. `./benchmark -publish` copies the report to `d
    exception. Cross-type atomicity needs an `atomically(...)` block, which blocks
    every other writer and reader for its duration.
 4. `SearchSpecification` can traverse nested lists of properties. Intersections,
-   fuzzy text, ranked similarity, geospatial indexing, sorting, pagination,
+   geospatial indexing, sorting, pagination,
    expiration, metrics, and persistence are not yet implemented.
 5. Empty-string prefix searches match all indexed names; prefix searches are
    **not** typo-tolerant. Separate collection dimensions do not preserve
