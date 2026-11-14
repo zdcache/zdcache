@@ -171,12 +171,30 @@ const VIEWS = [
       { subject: "zdcache-locking-per-type", label: "PER_TYPE locking (default)", highlight: true },
       { subject: "zdcache-locking-single", label: "SINGLE locking" },
     ] },
+  { key: "text", name: "Text search", highlightName: "Plain prefix search and declaration", otherName: "Words, fuzzy and contains",
+    subtitle: "zdcache searching one name dimension of realistic first, middle and last names, with each Match and with each "
+      + "way of declaring the dimension. Every chart uses a log scale.",
+    rows: [
+      { subject: "text-prefix", label: "prefix: plain string, 2 letters", highlight: true },
+      { subject: "text-words", label: "Match.words, first name and 3 letters" },
+      { subject: "text-words-ranked", label: "Match.words, searchRanked" },
+      { subject: "text-fuzzy-words-one-edit", label: "Match.fuzzy on words, 1 edit" },
+      { subject: "text-fuzzy-words", label: "Match.fuzzy on words, edits by length" },
+      { subject: "text-fuzzy-whole-one-edit", label: "Match.fuzzy on the whole value, 1 edit" },
+      { subject: "text-fuzzy-whole-two-edits", label: "Match.fuzzy on the whole value, 2 edits" },
+      { subject: "text-contains", label: "Match.contains, 3–4 letters" },
+      { subject: "text-contains-two-characters", label: "Match.contains, 2 letters" },
+      { subject: "text-keys-only", label: "No dimension" },
+      { subject: "text-declared-prefix", label: "prefix", highlight: true },
+      { subject: "text-declared-prefix-split", label: "prefixSplit" },
+      { subject: "text-declared-prefix-contains", label: "prefixContains" },
+    ] },
 ];
 
 const both = name => ({ libraries: "Library" + name, stores: "Configuration" + name });
 
 const PARTS = [
-  { title: "Key lookup", sized: true,
+  { title: "Key lookup", sized: true, views: ["libraries", "stores"],
     text: "One thread getting and putting entries by key. Every key is present, so there is no eviction pressure.",
     charts: [
       { title: "get", benchmark: both("Benchmark.get"), lowerIsBetter: true },
@@ -184,7 +202,7 @@ const PARTS = [
       { title: "put keeping indexed values", benchmark: { stores: "ConfigurationBenchmark.putKeepingIndexedValues" }, lowerIsBetter: true },
       { title: "put inside atomically", benchmark: { stores: "ConfigurationBenchmark.putAtomically" }, lowerIsBetter: true },
     ] },
-  { title: "Search", sized: true,
+  { title: "Search", sized: true, views: ["libraries", "stores"],
     text: "Finding every entry matching a query. Caches without indexes have to scan all entries. "
       + "Exact matches about 2% of the entries, range about 16%.",
     charts: [
@@ -193,14 +211,14 @@ const PARTS = [
       { title: "Compound: exact city and age range", benchmark: both("SearchBenchmark.compoundCityAge"), lowerIsBetter: true },
       { title: "Age range", benchmark: both("SearchBenchmark.rangeAge"), lowerIsBetter: true },
     ] },
-  { title: "Concurrent", sized: true,
+  { title: "Concurrent", sized: true, views: ["libraries", "stores"],
     text: "Four threads: all reading, or three reading while one writes.",
     charts: [
       { title: "Reads only", benchmark: "ConcurrentBenchmark.readOnly", lowerIsBetter: false },
       { title: "Mixed: reads", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedRead", lowerIsBetter: false },
       { title: "Mixed: writes", benchmark: "ConcurrentBenchmark.mixed", metric: "mixedWrite", lowerIsBetter: false },
     ] },
-  { title: "Concurrent search", sized: true,
+  { title: "Concurrent search", sized: true, views: ["libraries", "stores"],
     text: "Three threads searching, alone or while a fourth thread replaces an entry and then pauses 100 µs. "
       + "Searches rotate through the prefix, exact, compound and range queries.",
     charts: [
@@ -208,7 +226,7 @@ const PARTS = [
       { title: "With occasional writes: searches", benchmark: "ConcurrentSearchBenchmark.searchWithWrites", metric: "searches", lowerIsBetter: false },
       { title: "With occasional writes: writes", benchmark: "ConcurrentSearchBenchmark.searchWithWrites", metric: "writes", lowerIsBetter: false },
     ] },
-  { title: "Locking across types", sized: true,
+  { title: "Locking across types", sized: true, views: ["libraries", "stores"],
     text: "Four types of entries, with indexes on name and city, in the default buffered store. Four threads write to "
       + "their own type, or run blocks that read one type and write two; in mixed load two threads read random types "
       + "while two write. Only the locking strategy differs.",
@@ -219,7 +237,16 @@ const PARTS = [
       { title: "Mixed: reads", benchmark: "LockingBenchmark.mixed", metric: "mixedRead", lowerIsBetter: false },
       { title: "Mixed: writes", benchmark: "LockingBenchmark.mixed", metric: "mixedWrite", lowerIsBetter: false },
     ] },
-  { title: "Memory", sized: true,
+  { title: "Text search", sized: true, views: ["text"],
+    text: "One thread searching a name dimension, and the memory each way of declaring it costs. Names come from 50 first "
+      + "names and 60 surnames, a third with a middle name, so a query matches a fixed share of the entries and results "
+      + "grow with the size. Fuzzy queries carry one typo.",
+    charts: [
+      { title: "Search", benchmark: { text: "TextSearchBenchmark.search" }, lowerIsBetter: true },
+      { title: "Bytes per entry", footprint: "standard", lowerIsBetter: true },
+      { title: "Bytes per entry, compact object headers", footprint: "compact", lowerIsBetter: true },
+    ] },
+  { title: "Memory", sized: true, views: ["libraries", "stores"],
     text: "Heap bytes per cached entry, measured with JOL, excluding the cached objects themselves. The second chart "
       + "runs the JVM with compact object headers (-XX:+UseCompactObjectHeaders), which Java 25 supports but leaves off.",
     charts: [
@@ -673,6 +700,7 @@ function renderPage() {
 
   const draws = [];
   for (const part of PARTS) {
+    if (part.views && !part.views.includes(activeView.key)) continue;
     const section = document.createElement("section");
     section.className = "part";
     const heading = document.createElement("h2");

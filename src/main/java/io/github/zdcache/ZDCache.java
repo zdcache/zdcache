@@ -21,6 +21,11 @@ import java.util.function.Supplier;
 /**
  * In-process, multi-type cache with per-type capacity/lock and specification-defined indexes.
  * Mutating a returned entity by reference is intentionally NOT tracked; use put() to reindex.
+ *
+ * <p>Build one with {@link #builder()}, register a {@link SearchSpecification} per type, then {@code put},
+ * {@code get} and {@code search}. Each type is a bounded LRU: past its capacity the least recently used
+ * entry is evicted, and only {@code get} counts as use. A {@link Match} chooses how text is searched, and
+ * {@code searchRanked} also says how well each result matched.
  */
 public final class ZDCache {
     private final Map<Class<?>, TypeCache<?, ?>> types = new ConcurrentHashMap<>();
@@ -47,8 +52,10 @@ public final class ZDCache {
         entries = builder.entries;
     }
 
+    /** Starts a cache with the defaults: 10,000 entries per type, the buffered LRU store, strict recency, {@link Locking#PER_TYPE} and {@link Entries#PER_ID}. */
     public static Builder builder() { return new Builder(); }
 
+    /** Configures a cache; every setting has a default suited to searched data. */
     public static final class Builder {
         private int defaultMaxPerType = 10_000;
         private final Map<Class<?>, Integer> capacities = new HashMap<>();
@@ -57,37 +64,44 @@ public final class ZDCache {
         private Locking locking = Locking.PER_TYPE;
         private Entries entries = Entries.PER_ID;
 
+        /** The capacity of every type without its own; past it the least recently used entry is evicted. */
         public Builder defaultMaxPerType(int maximum) {
             positive(maximum);
             defaultMaxPerType = maximum;
             return this;
         }
 
+        /** A capacity for one type instead of the default; a type stored under another type's specification cannot have one. */
         public Builder capacity(Class<?> type, int maximum) {
             capacities.put(Objects.requireNonNull(type), positive(maximum));
             return this;
         }
 
+        /** Where entries are kept: the buffered LRU store by default, see {@link IdentityStoreFactory} for the others. */
         public Builder identityStore(IdentityStoreFactory factory) {
             stores = Objects.requireNonNull(factory);
             return this;
         }
 
+        /** How exactly the store keeps LRU order; {@link #build()} refuses one the store does not support. */
         public Builder recency(Recency recency) {
             this.recency = Objects.requireNonNull(recency);
             return this;
         }
 
+        /** One lock per type, the default, or one lock shared by every type. */
         public Builder locking(Locking locking) {
             this.locking = Objects.requireNonNull(locking);
             return this;
         }
 
+        /** One entry object per id, updated in place, the default, or a new entry for every put. */
         public Builder entries(Entries entries) {
             this.entries = Objects.requireNonNull(entries);
             return this;
         }
 
+        /** The cache, checking that the identity store supports the chosen recency. */
         public ZDCache build() {
             if (recency != null && !stores.recencies().contains(recency)) {
                 throw new IllegalArgumentException("The identity store supports " + stores.recencies()
@@ -202,6 +216,7 @@ public final class ZDCache {
         } finally { registry.unlock(); }
     }
 
+    /** Runs several calls, across types, as one step: other threads see all of their changes or none. */
     public void atomically(Runnable work) {
         Objects.requireNonNull(work);
         if (atomicOwner == Thread.currentThread()) {
@@ -216,6 +231,7 @@ public final class ZDCache {
         }
     }
 
+    /** Runs several calls, across types, as one step and returns what the work returns. */
     public <R> R atomically(Supplier<R> work) {
         Objects.requireNonNull(work);
         if (atomicOwner == Thread.currentThread()) return work.get();
@@ -248,6 +264,7 @@ public final class ZDCache {
         registry.unlock();
     }
 
+    /** Registers a type's specification before its first put; another instance for the same type throws. */
     public <T, ID> void register(SearchSpecification<T, ID> specification) {
         Objects.requireNonNull(specification);
         if (registerCache(specification).specification() != specification) {
@@ -255,6 +272,7 @@ public final class ZDCache {
         }
     }
 
+    /** Lets a subtype be stored and searched under its supertype's specification. */
     public <S> void register(TypeRedirect<S> redirect) {
         Objects.requireNonNull(redirect);
         registry.lock();
@@ -319,68 +337,82 @@ public final class ZDCache {
         registerCache(specification).put(id, entity, specification);
     }
 
+    /** The entity with this id, or null; counts as use for eviction. */
     public <T, ID> T get(Class<T> type, ID id) {
         TypeCache<?, ID> cache = resolve(type);
         if (cache == null) return null;
         return type.cast(cache.get(id, type));
     }
 
+    /** Removes the entity and its index entries, returning it, or null. */
     public <T, ID> T remove(Class<T> type, ID id) {
         TypeCache<?, ID> cache = resolve(type);
         return cache == null ? null : type.cast(cache.remove(id, type));
     }
 
+    /** The entity with this id, or null, without counting as use. */
     public <T, ID> T peek(Class<T> type, ID id) {
         TypeCache<?, ID> cache = resolve(type);
         return cache == null ? null : type.cast(cache.peek(id, type));
     }
 
+    /** Whether an entity with this id is stored, without counting as use. */
     public <ID> boolean contains(Class<?> type, ID id) {
         return peek(type, id) != null;
     }
 
+    /** Every stored entity of the type, without counting as use. */
     public <T> List<T> values(Class<T> type) {
         TypeCache<?, ?> cache = resolve(type);
         return cache == null ? List.of() : cache.values(type);
     }
 
+    /** Removes every entity of the type. */
     public void clear(Class<?> type) {
         TypeCache<?, ?> cache = resolve(type);
         if (cache != null) cache.clear(type);
     }
 
+    /** Removes every entity of every type. */
     public void clear() {
         types.values().forEach(TypeCache::clear);
     }
 
+    /** The id that would be evicted last, or null. */
     public <ID> ID mostRecentlyAccessedId(Class<?> type) {
         TypeCache<?, ID> cache = resolve(type);
         return cache == null ? null : cache.mostRecentlyAccessed(type);
     }
 
+    /** The id that would be evicted next, or null. */
     public <ID> ID leastRecentlyAccessedId(Class<?> type) {
         TypeCache<?, ID> cache = resolve(type);
         return cache == null ? null : cache.leastRecentlyAccessed(type);
     }
 
+    /** The entities matching a value, a {@link ValueRange} or a {@link Match} on the dimension the method names. */
     public <T> List<T> search(Getter<T, ?> dimension, Object... values) {
         return search(Getters.<T>type(dimension), Getters.name(dimension), values);
     }
 
+    /** The same for a dimension on the elements of a collection, named by the method references in turn. */
     public <T, A> List<T> search(Getter<T, ? extends Iterable<A>> first, Getter<A, ?> second, Object... values) {
         return search(Getters.<T>type(first), path(first, second), values);
     }
 
+    /** The same for a dimension two collections down. */
     public <T, A, B> List<T> search(Getter<T, ? extends Iterable<A>> first, Getter<A, ? extends Iterable<B>> second,
                                     Getter<B, ?> third, Object... values) {
         return search(Getters.<T>type(first), path(first, second, third), values);
     }
 
+    /** The same for a dimension three collections down. */
     public <T, A, B, C> List<T> search(Getter<T, ? extends Iterable<A>> first, Getter<A, ? extends Iterable<B>> second,
                                        Getter<B, ? extends Iterable<C>> third, Getter<C, ?> fourth, Object... values) {
         return search(Getters.<T>type(first), path(first, second, third, fourth), values);
     }
 
+    /** The same for a dimension four collections down. */
     public <T, A, B, C, D> List<T> search(Getter<T, ? extends Iterable<A>> first, Getter<A, ? extends Iterable<B>> second,
                                           Getter<B, ? extends Iterable<C>> third, Getter<C, ? extends Iterable<D>> fourth,
                                           Getter<D, ?> fifth, Object... values) {
@@ -393,50 +425,60 @@ public final class ZDCache {
         return path.toString();
     }
 
+    /** The entities of this type, or a subtype, matching a value, range or {@link Match}. */
     public <T> List<T> search(Class<T> type, Getter<? super T, ?> dimension, Object... values) {
         return search(type, Getters.name(dimension), values);
     }
 
+    /** The entities matching a value, range or {@link Match} on the dimension with this path. */
     public <T> List<T> search(Class<T> type, String dimension, Object... values) {
         TypeCache<?, Object> cache = resolve(type);
         if (cache == null) throw new MissingSearchSpecificationStrategyException(type);
         return cache.search(type, dimension, values);
     }
 
+    /** Like search on a text dimension, best first, with each result's {@link RankLevel}. */
     public <T> List<Ranked<T>> searchRanked(Getter<T, ?> dimension, Object... values) {
         return searchRanked(Getters.<T>type(dimension), Getters.name(dimension), values);
     }
 
+    /** The same for a text dimension on the elements of a collection. */
     public <T, A> List<Ranked<T>> searchRanked(Getter<T, ? extends Iterable<A>> first, Getter<A, ?> second, Object... values) {
         return searchRanked(Getters.<T>type(first), path(first, second), values);
     }
 
+    /** The same for a text dimension two collections down. */
     public <T, A, B> List<Ranked<T>> searchRanked(Getter<T, ? extends Iterable<A>> first, Getter<A, ? extends Iterable<B>> second,
                                                   Getter<B, ?> third, Object... values) {
         return searchRanked(Getters.<T>type(first), path(first, second, third), values);
     }
 
+    /** The same for a text dimension three collections down. */
     public <T, A, B, C> List<Ranked<T>> searchRanked(Getter<T, ? extends Iterable<A>> first, Getter<A, ? extends Iterable<B>> second,
                                                      Getter<B, ? extends Iterable<C>> third, Getter<C, ?> fourth, Object... values) {
         return searchRanked(Getters.<T>type(first), path(first, second, third, fourth), values);
     }
 
+    /** The same for a text dimension four collections down. */
     public <T, A, B, C, D> List<Ranked<T>> searchRanked(Getter<T, ? extends Iterable<A>> first, Getter<A, ? extends Iterable<B>> second,
                                                         Getter<B, ? extends Iterable<C>> third, Getter<C, ? extends Iterable<D>> fourth,
                                                         Getter<D, ?> fifth, Object... values) {
         return searchRanked(Getters.<T>type(first), path(first, second, third, fourth, fifth), values);
     }
 
+    /** Ranked search over this type or a subtype. */
     public <T> List<Ranked<T>> searchRanked(Class<T> type, Getter<? super T, ?> dimension, Object... values) {
         return searchRanked(type, Getters.name(dimension), values);
     }
 
+    /** Ranked search on the text dimension with this path. */
     public <T> List<Ranked<T>> searchRanked(Class<T> type, String dimension, Object... values) {
         TypeCache<?, Object> cache = resolve(type);
         if (cache == null) throw new MissingSearchSpecificationStrategyException(type);
         return cache.searchRanked(type, dimension, values);
     }
 
+    /** Builds what the replacement adds while writes continue, then switches it on in one short step; the identity must be the same instance. */
     public <T, ID> void updateSpecification(Class<T> type, SearchSpecification<T, ID> replacement) {
         Objects.requireNonNull(replacement);
         if (replacement.type() != type) {
@@ -447,6 +489,7 @@ public final class ZDCache {
         cache.updateSpecification(replacement);
     }
 
+    /** Builds the replacement now and switches it on when the returned change is committed. */
     public <T, ID> PreparedSpecification prepareSpecification(Class<T> type, SearchSpecification<T, ID> replacement) {
         Objects.requireNonNull(replacement);
         if (replacement.type() != type) {
@@ -457,16 +500,19 @@ public final class ZDCache {
         return cache.prepare(replacement);
     }
 
+    /** The specification registered for exactly this type, or null. */
     public <T> SearchSpecification<T, ?> getSpecification(Class<T> type) {
         TypeCache<T, ?> cache = typeCache(type);
         return cache == null ? null : cache.specification();
     }
 
+    /** The specification that serves this type, possibly a supertype's, or null. */
     public <T> SearchSpecification<? super T, ?> searchSpecification(Class<T> type) {
         TypeCache<? super T, ?> cache = resolve(type);
         return cache == null ? null : cache.specification();
     }
 
+    /** How many entities the type holds. */
     public int size(Class<?> type) {
         TypeCache<?, ?> cache = types.get(type);
         return cache == null ? 0 : cache.size();

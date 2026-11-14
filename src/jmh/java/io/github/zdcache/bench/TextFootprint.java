@@ -3,6 +3,7 @@ package io.github.zdcache.bench;
 import io.github.zdcache.IdentityDimension;
 import io.github.zdcache.SearchSpecification;
 import io.github.zdcache.ZDCache;
+import java.util.List;
 import java.util.Locale;
 import java.util.Random;
 import org.openjdk.jol.info.GraphLayout;
@@ -34,6 +35,24 @@ public final class TextFootprint {
         Student[] students = new Student[size];
         for (int i = 0; i < size; i++) students[i] = new Student(i, Names.person(random));
         return students;
+    }
+
+    static final String KEYS = "text-keys-only";
+    static final String PREFIX = "text-declared-prefix";
+    static final String SPLIT = "text-declared-prefix-split";
+    static final String CONTAINS = "text-declared-prefix-contains";
+    static final List<String> SUBJECTS = List.of(KEYS, PREFIX, SPLIT, CONTAINS);
+
+    static double bytesPerEntry(String subject, int size) {
+        var id = IdentityDimension.of(Student::id);
+        var spec = switch (subject) {
+            case KEYS -> SearchSpecification.basic(id);
+            case PREFIX -> SearchSpecification.builder(id).prefix(Student::name).build();
+            case SPLIT -> SearchSpecification.builder(id).prefixSplit(Student::name).build();
+            case CONTAINS -> SearchSpecification.builder(id).prefixContains(Student::name).build();
+            default -> throw new IllegalArgumentException("Unknown text declaration " + subject);
+        };
+        return bytesPerEntry(students(size), spec);
     }
 
     private static double bytesPerEntry(Student[] students, SearchSpecification<Student, Long> spec) {

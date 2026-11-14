@@ -2,7 +2,8 @@ package io.github.zdcache;
 
 import java.util.Objects;
 
-/** Inclusive bounds, e.g. ValueRange.between(20, 30). */
+/** Inclusive bounds, e.g. ValueRange.between(20, 30). * Search a range dimension with it; a single value searches as a range of just that value.
+ */
 public record ValueRange<V extends Comparable<? super V>>(V from, V to) {
     public ValueRange {
         Objects.requireNonNull(from);

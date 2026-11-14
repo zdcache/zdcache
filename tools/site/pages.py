@@ -5,7 +5,7 @@ from pathlib import Path
 PAGES = [
     ("", "Home", ["Why ZDCache?", "Quick start", "Performance", "When should you use ZDCache?", "Installation"]),
     ("search-specifications", "Search specifications",
-     ["Search specifications", "Basic/default specification", "Identity, specification and update rules"]),
+     ["Search specifications", "Text search", "Basic/default specification", "Identity, specification and update rules"]),
     ("configuration", "Configuration", ["Choosing a configuration", "Locking and atomicity"]),
     ("benchmarks", "Benchmarks", ["Benchmark"]),
     ("limitations", "Limitations", ["Current limitations and follow-up work"]),

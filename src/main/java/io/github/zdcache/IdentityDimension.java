@@ -7,6 +7,9 @@ import java.util.function.Function;
 /**
  * Stable entity identity. Keep and reuse the SAME instance when evolving a search specification;
  * this deliberately prevents accidentally swapping a key extractor with different semantics.
+ *
+ * <p>{@link #of(Getter)} reads the identity with a method reference and names it after the method;
+ * {@link #explicit(Class)} is for ids passed to {@code put(type, id, entity)}.
  */
 public final class IdentityDimension<T, ID> {
     private final Class<T> type;
@@ -19,11 +22,13 @@ public final class IdentityDimension<T, ID> {
         this.extractor = extractor;
     }
 
+    /** An identity read by the extractor and named {@code name}. */
     public static <T, ID> IdentityDimension<T, ID> of(
             Class<T> type, String name, Function<T, ID> extractor) {
         return new IdentityDimension<>(type, name, Objects.requireNonNull(extractor));
     }
 
+    /** An identity read by the method reference and named after the method. */
     public static <T, ID> IdentityDimension<T, ID> of(Getter<T, ID> getter) {
         return new IdentityDimension<>(Getters.type(getter), Getters.name(getter), getter);
     }

@@ -20,6 +20,11 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Predicate;
 
+/**
+ * The default identity store: strict LRU, with recency updates buffered so that {@code get} does not
+ * take the type's lock. With {@link io.github.zdcache.Recency#APPROXIMATE} it may drop recency updates
+ * under contention and exceed capacity until its next maintenance.
+ */
 public final class IdentityStoreBufferedLru<ID, T> implements IdentityStore<ID, T> {
     static final int STRIPE_CAPACITY = 64;
     private static final int STRIPE_MASK = STRIPE_CAPACITY - 1;
