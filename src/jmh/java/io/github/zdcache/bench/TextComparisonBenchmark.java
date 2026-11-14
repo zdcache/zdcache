@@ -26,7 +26,8 @@ public class TextComparisonBenchmark {
             "zdcache-text-words-ranked", "lucene-text-words-ranked", "zdcache-text-fuzzy-words-one-edit", "lucene-text-fuzzy-words-one-edit",
             "zdcache-text-fuzzy-words", "lucene-text-fuzzy-words", "zdcache-text-fuzzy-whole-one-edit", "lucene-text-fuzzy-whole-one-edit",
             "zdcache-text-fuzzy-whole-two-edits", "lucene-text-fuzzy-whole-two-edits", "zdcache-text-contains", "lucene-text-contains",
-            "zdcache-text-contains-two", "lucene-text-contains-two"})
+            "zdcache-text-contains-two", "lucene-text-contains-two", "zdcache-text-words-best", "lucene-text-words-best",
+            "zdcache-text-fuzzy-words-best", "lucene-text-fuzzy-words-best", "zdcache-text-contains-best", "lucene-text-contains-best"})
     String subject;
 
     private TextSubject engine;

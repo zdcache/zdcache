@@ -32,6 +32,8 @@ import org.apache.lucene.search.Scorable;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.SearcherManager;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.TopScoreDocCollectorManager;
 import org.apache.lucene.search.WildcardQuery;
 import org.apache.lucene.store.ByteBuffersDirectory;
 
@@ -82,13 +84,14 @@ final class LuceneText implements TextSubject {
 
     private static Query query(TextQuery query) {
         String text = query.text();
-        return switch (query.kind()) {
+        return switch (query.kind().searched()) {
             case PREFIX -> new PrefixQuery(new Term(WHOLE, text));
             case WORDS, WORDS_RANKED -> all(text, word -> new PrefixQuery(new Term(WORDS, word)));
             case FUZZY_WORDS_ONE_EDIT -> all(text, word -> new FuzzyQuery(new Term(WORDS, word), 1));
             case FUZZY_WORDS -> all(text, word -> new FuzzyQuery(new Term(WORDS, word), TextQuery.editsFor(word)));
             case FUZZY_WHOLE_ONE_EDIT, FUZZY_WHOLE_TWO_EDITS -> new FuzzyQuery(new Term(WHOLE, text), query.maxEdits());
             case CONTAINS, CONTAINS_TWO -> new WildcardQuery(new Term(WHOLE, "*" + text + "*"));
+            default -> throw new IllegalArgumentException(query.toString());
         };
     }
 
@@ -98,7 +101,20 @@ final class LuceneText implements TextSubject {
         return all.build();
     }
 
+    @Override public Best best(TextQuery query, int limit) {
+        try {
+            IndexSearcher searcher = searchers.acquire();
+            try {
+                TopDocs top = searcher.search(query(query), new TopScoreDocCollectorManager(limit, Integer.MAX_VALUE));
+                List<Student> found = new ArrayList<>(top.scoreDocs.length);
+                for (ScoreDoc hit : top.scoreDocs) found.add(students.get(idOf(searcher, hit.doc)));
+                return new Best(found, (int) top.totalHits.value());
+            } finally { searchers.release(searcher); }
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+    }
+
     @Override public List<Student> search(TextQuery query) {
+        if (query.kind().best()) return best(query, TextQuery.BEST).results();
         try {
             IndexSearcher searcher = searchers.acquire();
             try {

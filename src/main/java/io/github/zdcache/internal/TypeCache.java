@@ -6,13 +6,14 @@ import io.github.zdcache.ImmutableIdentityDimensionException;
 import io.github.zdcache.Match;
 import io.github.zdcache.MissingSearchSpecificationStrategyException;
 import io.github.zdcache.PreparedSpecification;
+import io.github.zdcache.RankLevel;
 import io.github.zdcache.Ranked;
+import io.github.zdcache.RankedPage;
 import io.github.zdcache.SearchSpecification;
 import io.github.zdcache.store.IdentityStore;
 import io.github.zdcache.store.IndexedEntry;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -250,14 +251,13 @@ public final class TypeCache<T, ID> {
             DimensionRegistry<T, ID> registry = indexes;
             if (values != null && values.length == 1 && (values[0] instanceof Match.Words || values[0] instanceof Match.Fuzzy || values[0] instanceof Match.Contains)) {
                 List<S> found = new ArrayList<>();
-                for (Ranked<S> ranked : ranked(registry, view, dimension, values)) found.add(ranked.result());
+                for (Ranked<S> ranked : ranked(registry, view, dimension, Integer.MAX_VALUE, values).results()) found.add(ranked.result());
                 return Collections.unmodifiableList(found);
             }
-            Set<IndexedEntry<T>> seen = registry.multiValued(dimension)
-                ? Collections.newSetFromMap(new IdentityHashMap<>()) : null;
+            java.util.BitSet seen = registry.multiValued(dimension) ? new java.util.BitSet(registry.ordinalBound()) : null;
             List<S> found = new ArrayList<>();
             registry.forEachMatch(dimension, values, entry -> {
-                if (entry.evicted() || seen != null && !seen.add(entry)) return;
+                if (entry.evicted() || seen != null && seenBefore(seen, entry)) return;
                 T entity = entry.entity();
                 if (view.isInstance(entity)) found.add(view.cast(entity));
             });
@@ -270,27 +270,65 @@ public final class TypeCache<T, ID> {
             if (!specification.searchable()) {
                 throw new MissingSearchSpecificationStrategyException(specification.type());
             }
-            return Collections.unmodifiableList(ranked(indexes, view, dimension, values));
+            return ranked(indexes, view, dimension, Integer.MAX_VALUE, values).results();
         } catch (io.github.zdcache.UnknownSearchDimensionException | io.github.zdcache.UndeclaredSearchStrategyException e) {
             throw notReadyOr(e, dimension, values);
         } finally { read.unlock(); }
     }
 
-    private <S> List<Ranked<S>> ranked(DimensionRegistry<T, ID> registry, Class<S> view, String dimension, Object... values) {
+    public <S> RankedPage<S> searchBest(Class<S> view, String dimension, int limit, Object... values) {
+        if (limit < 1) throw new IllegalArgumentException("A search for the best results needs a limit of at least 1, not " + limit);
+        read.lock();
+        try {
+            if (!specification.searchable()) {
+                throw new MissingSearchSpecificationStrategyException(specification.type());
+            }
+            return ranked(indexes, view, dimension, limit, values);
+        } catch (io.github.zdcache.UnknownSearchDimensionException | io.github.zdcache.UndeclaredSearchStrategyException e) {
+            throw notReadyOr(e, dimension, values);
+        } finally { read.unlock(); }
+    }
+
+    private static boolean seenBefore(java.util.BitSet seen, IndexedEntry<?> entry) {
+        int ordinal = entry.ordinal();
+        if (seen.get(ordinal)) return true;
+        seen.set(ordinal);
+        return false;
+    }
+
+    @SuppressWarnings("unchecked")
+    private <S> RankedPage<S> ranked(DimensionRegistry<T, ID> registry, Class<S> view, String dimension, int limit, Object... values) {
         boolean checksItsDimension = values != null && values.length == 1 && (values[0] instanceof Match.Words || values[0] instanceof Match.Fuzzy || values[0] instanceof Match.Contains);
         if (!checksItsDimension) registry.requireRankable(dimension);
-        Set<IndexedEntry<T>> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-        List<Ranked<S>> found = new ArrayList<>();
+        java.util.BitSet seen = new java.util.BitSet(registry.ordinalBound());
+        RankLevel[] levels = RankLevel.values();
+        List<Ranked<S>>[] byLevel = new List[levels.length];
+        int[] total = { 0 };
+        int[] kept = new int[levels.length];
         List<Ranker<T>> ranker = new ArrayList<>(1);
         registry.forEachMatch(dimension, values, entry -> {
-            if (entry.evicted() || !seen.add(entry)) return;
+            if (entry.evicted() || seenBefore(seen, entry)) return;
             T entity = entry.entity();
             if (!view.isInstance(entity)) return;
             if (ranker.isEmpty()) ranker.add(registry.ranker(dimension, values));
-            found.add(new Ranked<>(view.cast(entity), ranker.getFirst().rank(entity)));
+            RankLevel level = ranker.getFirst().rank(entity);
+            total[0]++;
+            int better = 0;
+            for (int i = 0; i <= level.ordinal(); i++) better += kept[i];
+            if (better >= limit) return;
+            if (byLevel[level.ordinal()] == null) byLevel[level.ordinal()] = new ArrayList<>();
+            byLevel[level.ordinal()].add(new Ranked<>(view.cast(entity), level));
+            kept[level.ordinal()]++;
         });
-        found.sort(Comparator.comparing(Ranked::rankLevel));
-        return found;
+        List<Ranked<S>> best = new ArrayList<>(Math.min(limit, total[0]));
+        for (List<Ranked<S>> level : byLevel) {
+            if (level == null) continue;
+            for (Ranked<S> ranked : level) {
+                if (best.size() == limit) break;
+                best.add(ranked);
+            }
+        }
+        return new RankedPage<>(best, total[0]);
     }
 
     /** Rebuild all dimensions atomically. Never replace the registered identity instance. */

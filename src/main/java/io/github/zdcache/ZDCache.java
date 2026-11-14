@@ -479,6 +479,23 @@ public final class ZDCache {
     }
 
     /** Builds what the replacement adds while writes continue, then switches it on in one short step; the identity must be the same instance. */
+    /** The limit best results of a text search, best first with their {@link RankLevel}, and the total number of results; nothing beyond the limit is kept or sorted. */
+    public <T> RankedPage<T> searchBest(Getter<T, ?> dimension, int limit, Object... values) {
+        return searchBest(Getters.<T>type(dimension), Getters.name(dimension), limit, values);
+    }
+
+    /** The limit best results over this type or a subtype, with the total number of results. */
+    public <T> RankedPage<T> searchBest(Class<T> type, Getter<? super T, ?> dimension, int limit, Object... values) {
+        return searchBest(type, Getters.name(dimension), limit, values);
+    }
+
+    /** The limit best results on the text dimension with this path, with the total number of results. */
+    public <T> RankedPage<T> searchBest(Class<T> type, String dimension, int limit, Object... values) {
+        TypeCache<?, Object> cache = resolve(type);
+        if (cache == null) throw new MissingSearchSpecificationStrategyException(type);
+        return cache.searchBest(type, dimension, limit, values);
+    }
+
     public <T, ID> void updateSpecification(Class<T> type, SearchSpecification<T, ID> replacement) {
         Objects.requireNonNull(replacement);
         if (replacement.type() != type) {

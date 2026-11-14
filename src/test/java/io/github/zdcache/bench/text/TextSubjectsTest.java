@@ -29,6 +29,14 @@ class TextSubjectsTest {
                 int nonEmpty = 0;
                 for (int round = 0; round < 60; round++) {
                     TextQuery query = TextQuery.of(kind, students.get(random.nextInt(students.size())).name(), random);
+                    if (kind.best()) {
+                        TextSubject.Best ours = zdcache.best(query, TextQuery.BEST), theirs = lucene.best(query, TextQuery.BEST);
+                        assertEquals(ours.total(), theirs.total(), query::toString);
+                        assertEquals(Math.min(TextQuery.BEST, ours.total()), ours.results().size(), query::toString);
+                        assertEquals(ours.results().size(), theirs.results().size(), query::toString);
+                        if (ours.total() > 0) nonEmpty++;
+                        continue;
+                    }
                     List<Long> expected = ids(zdcache.search(query));
                     assertEquals(expected, ids(lucene.search(query)), query::toString);
                     if (!expected.isEmpty()) nonEmpty++;

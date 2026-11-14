@@ -9,6 +9,10 @@ public interface TextSubject extends AutoCloseable {
     void load(List<Student> students);
     void put(Student student);
     List<Student> search(TextQuery query);
+
+    record Best(List<Student> results, int total) { }
+
+    Best best(TextQuery query, int limit);
     Object root();
     @Override default void close() { }
 

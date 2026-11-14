@@ -40,29 +40,68 @@ public final class Ranker<T> {
 
     private RankLevel rank(String value) {
         if (query instanceof Match.Contains) {
-            if (!value.toLowerCase(Locale.ROOT).contains(lower)) return null;
-            RankLevel level = withoutTypos(value);
+            String lowerValue = value.toLowerCase(Locale.ROOT);
+            if (!lowerValue.contains(lower)) return null;
+            RankLevel level = withoutTypos(lowerValue);
             return level == RankLevel.WORDS_IN_ANY_ORDER ? RankLevel.CONTAINS : level;
         }
-        if (!(query instanceof Match.Fuzzy fuzzy)) return withoutTypos(value);
+        if (!(query instanceof Match.Fuzzy fuzzy)) return withoutTypos(value.toLowerCase(Locale.ROOT));
         int edits = dimension.split() == null ? wholeEdits(value, fuzzy) : wordEdits(value, fuzzy);
-        if (edits == 0) return withoutTypos(value);
+        if (edits == 0) return withoutTypos(value.toLowerCase(Locale.ROOT));
         if (edits == 1) return RankLevel.ONE_EDIT;
         return edits == 2 ? RankLevel.TWO_EDITS : null;
     }
 
-    private RankLevel withoutTypos(String value) {
-        String whole = normalized(value);
-        if (whole.equals(wanted)) return RankLevel.EXACT;
-        if (whole.startsWith(wanted)) return RankLevel.STARTS_WITH;
-        List<String> found = List.copyOf(split.words(value));
+    private RankLevel withoutTypos(String lowerValue) {
+        RankLevel whole = whole(lowerValue);
+        if (whole != null) return whole;
+        int[] starts = new int[8], ends = new int[8];
+        int count = 0;
+        int start = -1;
+        for (int i = 0; i <= lowerValue.length(); ) {
+            int codePoint = i < lowerValue.length() ? lowerValue.codePointAt(i) : ' ';
+            boolean separator = i == lowerValue.length() || split.separates(codePoint);
+            if (separator && start >= 0) {
+                if (!repeated(lowerValue, starts, ends, count, start, i)) {
+                    if (count == starts.length) { starts = java.util.Arrays.copyOf(starts, count * 2); ends = java.util.Arrays.copyOf(ends, count * 2); }
+                    starts[count] = start;
+                    ends[count++] = i;
+                }
+                start = -1;
+            } else if (!separator && start < 0) start = i;
+            i += i < lowerValue.length() ? Character.charCount(codePoint) : 1;
+        }
         int next = 0;
         for (String word : words) {
-            while (next < found.size() && !found.get(next).startsWith(word)) next++;
-            if (next == found.size()) return RankLevel.WORDS_IN_ANY_ORDER;
+            while (next < count && !(ends[next] - starts[next] >= word.length() && lowerValue.startsWith(word, starts[next]))) next++;
+            if (next == count) return RankLevel.WORDS_IN_ANY_ORDER;
             next++;
         }
         return RankLevel.WORDS_IN_ORDER;
+    }
+
+    private static boolean repeated(String text, int[] starts, int[] ends, int count, int start, int end) {
+        for (int i = 0; i < count; i++)
+            if (ends[i] - starts[i] == end - start && text.regionMatches(starts[i], text, start, end - start)) return true;
+        return false;
+    }
+
+    private RankLevel whole(String lowerValue) {
+        int at = 0, length = lowerValue.length();
+        while (at < length && Character.isWhitespace(lowerValue.charAt(at))) at++;
+        for (int i = 0; i < wanted.length(); i++) {
+            char c = wanted.charAt(i);
+            if (c == ' ') {
+                if (at >= length || !Character.isWhitespace(lowerValue.charAt(at))) return null;
+                while (at < length && Character.isWhitespace(lowerValue.charAt(at))) at++;
+                if (at >= length) return null;
+            } else {
+                if (at >= length || lowerValue.charAt(at) != c) return null;
+                at++;
+            }
+        }
+        while (at < length && Character.isWhitespace(lowerValue.charAt(at))) at++;
+        return at == length ? RankLevel.EXACT : RankLevel.STARTS_WITH;
     }
 
     private int wholeEdits(String value, Match.Fuzzy fuzzy) {
