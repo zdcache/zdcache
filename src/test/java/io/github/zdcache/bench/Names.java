@@ -2,7 +2,7 @@ package io.github.zdcache.bench;
 
 import java.util.Random;
 
-final class Names {
+public final class Names {
     private static final String[] FIRST = {
         "Anna", "Maria", "Ingrid", "Kari", "Nora", "Emma", "Sofie", "Ida", "Sara", "Hanne", "Marit", "Liv", "Astrid", "Silje",
         "Thea", "Julie", "Mari", "Ane", "Eva", "Heidi", "Ole", "Per", "Lars", "Jan", "Knut", "Arne", "Bjorn", "Erik", "Jon",
@@ -20,13 +20,13 @@ final class Names {
 
     private Names() { }
 
-    static String person(Random random) {
+    public static String person(Random random) {
         String first = FIRST[random.nextInt(FIRST.length)];
         String middle = random.nextInt(3) == 0 ? " " + FIRST[random.nextInt(FIRST.length)] : "";
         return first + middle + " " + LAST[random.nextInt(LAST.length)];
     }
 
-    static String typo(String text, Random random) {
+    public static String typo(String text, Random random) {
         int at = 1 + random.nextInt(text.length() - 2);
         return switch (random.nextInt(4)) {
             case 0 -> text.substring(0, at) + (char) ('a' + random.nextInt(26)) + text.substring(at + 1);

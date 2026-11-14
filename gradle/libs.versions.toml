@@ -8,6 +8,7 @@ hazelcast = "5.7.0"
 jackson = "2.22.3"
 jmh = "1.37"
 jol = "0.17"
+lucene = "10.6.0"
 junit = "5.12.2"
 maven-publish = "0.37.0"
 
@@ -20,6 +21,7 @@ ehcache = { module = "org.ehcache:ehcache", version.ref = "ehcache" }
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
 hazelcast = { module = "com.hazelcast:hazelcast", version.ref = "hazelcast" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+lucene-core = { module = "org.apache.lucene:lucene-core", version.ref = "lucene" }
 jmh-core = { module = "org.openjdk.jmh:jmh-core", version.ref = "jmh" }
 jmh-generator = { module = "org.openjdk.jmh:jmh-generator-annprocess", version.ref = "jmh" }
 jol-core = { module = "org.openjdk.jol:jol-core", version.ref = "jol" }

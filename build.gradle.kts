@@ -35,6 +35,7 @@ dependencies {
     testImplementation(libs.cqengine)
     testImplementation(libs.ehcache)
     testImplementation(libs.hazelcast)
+    testImplementation(libs.lucene.core)
     testImplementation(libs.jackson.databind)
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -100,6 +101,16 @@ fun registerFootprint(name: String, directory: String, describedAs: String, vara
 registerFootprint("footprint", "footprint", "Measures heap bytes per cached entry for zdcache and the other libraries.")
 registerFootprint("footprintCompact", "footprint-compact",
     "Measures heap bytes per cached entry with compact object headers.", "-XX:+UseCompactObjectHeaders")
+
+tasks.register<JavaExec>("textComparisonFootprint") {
+    description = "Measures heap bytes per cached entry for one name searched with every text strategy, in zdcache and in Lucene."
+    group = "verification"
+    classpath = jmh.runtimeClasspath
+    mainClass = "io.github.zdcache.bench.TextComparisonFootprint"
+    javaLauncher = benchmarkJava
+    maxHeapSize = "2g"
+    jvmArgs("-Djdk.attach.allowAttachSelf=true", "-Djol.magicFieldOffset=true")
+}
 
 tasks.register<JavaExec>("textFootprint") {
     description = "Measures heap bytes per cached entry for a name dimension declared with prefix, prefixSplit and prefixContains."
