@@ -4,11 +4,12 @@
 
 Search cached Java objects without scanning the cache.
 
-ZDCache is an in-process Java cache that combines lookups by key with indexed searches over the objects' properties: exact values, case-insensitive prefixes, numeric ranges, combinations of these, and values inside nested collections. Each cached type has its own capacity and LRU eviction, and its indexes follow every entry that is put, replaced, removed or evicted.
+ZDCache is an in-process Java cache that combines lookups by key with indexed searches over the objects' properties: exact values, case-insensitive prefixes, numeric ranges, combinations of these, values inside nested collections, and text by its words, with typos or anywhere inside it. Each cached type has its own capacity and LRU eviction, and its indexes follow every entry that is put, replaced, removed or evicted.
 
 ## Why ZDCache?
 
 - **Search by more than the key.** Declare the properties you search with method references, then search them by exact value, prefix, range or a compound of these. A search reads an index instead of every entry.
+- **Search text the way people type it.** Find "Anna Maria Olsen" by "anna ols", tolerate a typo such as "Andersn", or find "ders" inside "Andersen", with the best matches first.
 - **Search inside nested collections.** Index the properties of objects in nested lists, such as the cities of a person's addresses, without keeping lookup maps of your own.
 - **Indexes follow the writes.** Putting, replacing, removing or evicting an entry updates its index entries.
 - **Several types in one cache.** Each class has its own capacity, specification, indexes and, by default, its own lock, so writes to one type do not wait for another.
@@ -61,9 +62,15 @@ ZDCache is built for workloads that search cached objects. In the published run 
 
 With three threads searching and a fourth writing now and then, ZDCache answers 2.5–3.7 times as many searches as CQEngine. Caches without indexes have to scan every entry, which is 7–1,800× slower.
 
+Text search runs on the same dimensions. At 10,000 names, finding a name by its words takes 13 µs and with a typo
+19 µs, and ranking the results costs nothing measurable.
+
 The searches come at a cost:
 
 - Indexes take memory and make writes slower. Four indexes raise the memory per entry from 123 to 359 bytes, not counting the cached objects, and a `put` from 55 ns to 1.3 µs.
+- Finding text anywhere inside a value costs the most: its index adds 216 bytes per entry, about 2.5 times a prefix
+  index, and a search for 3–4 letters takes 0.3 ms at 10,000 names. Searching by words adds 40 bytes; typo-tolerant
+  search adds nothing.
 - For key-value workloads under concurrent load, Caffeine and cache2k are faster: with four threads, ZDCache reads at about a third of Caffeine's rate. If you only look entries up by key, use one of them.
 - The benchmarks ran on the author's development machine on Java 25, and none of them put the caches under eviction pressure. They indicate gains and losses, not guarantees.
 
@@ -77,6 +84,7 @@ ZDCache suits bounded collections of objects that are read often and searched by
 |---|---|
 | You look cached objects up by their properties, not only by key | You only look values up by key: Caffeine or cache2k |
 | Your searches use prefixes, ranges or combinations of values | You need the highest key-value throughput from many threads: Caffeine or cache2k |
+| You search names and titles by their words, with typos | You need full-text search over documents, with stemming and relevance scoring: Lucene or Elasticsearch |
 | You keep several Java types in one bounded cache | You need expiry or persistence, which ZDCache does not provide |
 | Searches must run inside the application, without a network call | Several instances of an application must share the cache: [DZDCache](https://github.com/zdcache/dzdcache) replicates searchable ZDCache caches between them |
 
@@ -129,7 +137,7 @@ cache.put(new Person(1, "Simon", 32,
 List<Person> inOslo = cache.search(Person.class, "addresses.city", "os");
 List<Person> inOsloToo = cache.search(Person::addresses, Address::city, "os");
 
-// Full per-type reindex; unchanged identity object is required.
+// Replaces the specification, building only what it adds; unchanged identity object is required.
 var nextSpec = SearchSpecification.builder(personId)
     .prefix(Person::name)
     .build();
@@ -162,6 +170,65 @@ List<Person> sameAgain = cache.search(Person.class, Person::name, "si");
 List<Person> inOslo = cache.search(Person.class, "addresses.city", "os");
 List<Person> aged = cache.search(Person.class, "age", ValueRange.between(20, 40));
 ```
+
+## Text search
+
+A prefix dimension finds text from its start. Three more ways to match text build on it, each chosen per search with
+a `Match`. Two of them need an extra index on the dimension, so you pay memory only for what you declare:
+
+| You want | Declare | Search with | Extra index |
+|---|---|---|---|
+| Names starting with "an" | `prefix(Person::name)` | `"an"` or `Match.prefix("an")` | none |
+| "anna ols" to find "Anna Maria Olsen" | `prefixSplit(Person::name)` | `Match.words("anna ols")` | words, small |
+| "Andersn" to find "Andersen" | `prefix` or `prefixSplit` | `Match.fuzzy("andersn")` | none |
+| "ders" anywhere in "Andersen" | `prefixContains(Person::name)` | `Match.contains("ders")` | three-letter pieces, large |
+
+```java
+record Person(long id, String name, String city) {}
+
+var spec = SearchSpecification.builder(IdentityDimension.of(Person::id))
+    .prefix(Person::name, TextStrategy.split(), TextStrategy.contains())   // or prefixSplit / prefixContains alone
+    .exact(Person::city)
+    .build();
+
+cache.search(Person.class, Person::name, "anna");                          // the whole value starts with "anna"
+cache.search(Person.class, Person::name, Match.words("ols anna"));         // every word starts a word, any order
+cache.search(Person.class, Person::name, Match.fuzzy("ana olsne"));        // typos: 1 edit up to 5 letters, 2 beyond
+cache.search(Person.class, Person::name, Match.fuzzy("olsne", 1));         // at most one edit
+cache.search(Person.class, Person::name, Match.contains("lse"));           // anywhere in the value
+cache.searchRanked(Person::name, Match.words("anna olsen"));               // best first, with a RankLevel each
+```
+
+Words, fuzzy and contains searches return the best matches first: the exact value, then values starting with the
+query, then words in the query's order, in any order, and last one and two edits. Words split on whitespace;
+`TextStrategy.split(Split.NON_ALPHANUMERIC)` also splits on hyphens and punctuation, so "olsen" finds
+"Kari Hansen-Olsen". A search for a strategy the dimension does not declare throws
+`UndeclaredSearchStrategyException`.
+
+To add a strategy to a type that is already cached, derive the next specification from the current one. Only the
+new index is built, from the cached entries, while writes continue:
+
+```java
+var current = (SearchSpecification<Person, Long>) cache.getSpecification(Person.class);
+cache.updateSpecification(Person.class, current.withStrategies(Person::name, TextStrategy.split()));
+```
+
+### Choosing a text strategy
+
+The figures come from the text search run in [Benchmark](#text-search-benchmark), on one thread, searching names made of
+common first names and surnames.
+
+- **Words, `prefixSplit`.** Shines for names and titles, where people type a first name and the start of a surname.
+  A search takes 13 µs at 10,000 names, against 3.2 µs for a plain prefix, and the word index adds 40 bytes per
+  entry. Reach for it first.
+- **Typos, `Match.fuzzy`.** Shines when people type names they have heard rather than read. It needs no extra
+  index: with one typo a search takes 19 µs at 10,000 names, and allowing two edits costs two to three times as
+  much as one. Let the query's length decide the edits unless you need fewer.
+- **Anywhere, `prefixContains`.** Shines for codes and identifiers searched by a part in the middle. It is the
+  costly one: 216 bytes per entry, about 2.5 times a prefix index, and 0.3 ms for 3–4 letters at 10,000 names,
+  because short pieces match many values. Keep it for smaller types or longer queries; one or two letters look
+  through every value.
+- **Ranking, `searchRanked`.** Costs nothing measurable over the same search, so use it whenever the order matters.
 
 ## Basic/default specification
 
@@ -391,88 +458,9 @@ var spec = SearchSpecification.builder(IdentityDimension.of(Person.class, "id", 
 
 Switch to `recency(Recency.APPROXIMATE)` when profiling shows many threads waiting on the cache.
 
-### Text search
-
-A `prefix` dimension finds text from its start. Three more ways to match text build on it, each chosen per search
-with a `Match`. Two of them need an extra index, declared on the dimension, so you pay memory only for what you use:
-
-| You want | Declare | Search with | Extra memory |
-|---|---|---|---|
-| Names starting with "an" | `prefix(Person::name)` | `"an"` or `Match.prefix("an")` | none |
-| "anna ols" to find "Anna Maria Olsen" | `prefixSplit(Person::name)` | `Match.words("anna ols")` | small |
-| "Andersn" to find "Andersen" | `prefix` or `prefixSplit` | `Match.fuzzy("andersn")` | none |
-| "ders" anywhere in "Andersen" | `prefixContains(Person::name)` | `Match.contains("ders")` | large |
-
-```java
-record Person(long id, String name, String city) {}
-
-var spec = SearchSpecification.builder(IdentityDimension.of(Person::id))
-    .prefix(Person::name, TextStrategy.split(), TextStrategy.contains())   // or prefixSplit / prefixContains alone
-    .exact(Person::city)
-    .build();
-
-cache.search(Person.class, Person::name, "anna");                          // the whole value starts with "anna"
-cache.search(Person.class, Person::name, Match.words("ols anna"));         // every word starts a word, any order
-cache.search(Person.class, Person::name, Match.fuzzy("ana olsne"));        // typos: 1 edit up to 5 letters, 2 beyond
-cache.search(Person.class, Person::name, Match.fuzzy("olsne", 1));         // at most one edit
-cache.search(Person.class, Person::name, Match.contains("lse"));           // anywhere in the value
-cache.searchRanked(Person::name, Match.words("anna olsen"));               // best first, with a RankLevel each
-```
-
-Names split on whitespace by default; `TextStrategy.split(Split.NON_ALPHANUMERIC)` also splits on hyphens and
-punctuation, so "olsen" finds "Kari Hansen-Olsen". Words, fuzzy and contains searches return the best matches
-first: exact, then starting with the query, then words in order, in any order, then one and two edits. A search
-for a strategy the dimension does not declare throws `UndeclaredSearchStrategyException`. To add a strategy to a
-type that is already cached, derive the next specification and update it; writes continue while it is built:
-
-```java
-var current = (SearchSpecification<Person, Long>) cache.getSpecification(Person.class);
-cache.updateSpecification(Person.class, current.withStrategies(Person::name, TextStrategy.split()));
-```
-
-When to use which:
-
-- **`prefixSplit` and `Match.words`** suit names and titles, where people type a first name and the start of a
-  surname. It costs about half a prefix index more and is the one to reach for first.
-- **`Match.fuzzy`** catches typos without any extra index. One edit costs about as much as a words search; two edits
-  two to three times more. Leave the number of edits to the query's length unless you need fewer.
-- **`prefixContains` and `Match.contains`** find text inside words, such as part of a product code. Its index costs
-  about 2.5 times a prefix index, and short queries match many values, so keep it for smaller types or queries of
-  four or more letters. One or two letters look through every value.
-- **`searchRanked`** costs nothing measurable over the same search, so use it whenever the order matters.
-
-Measured on 2026-11-14 on Java 25, one thread, one fork, 3 warm-up and 5 measured iterations, searching names made
-of 50 first names and 60 surnames, a third with a middle name. A query matches a fixed share of the names, so
-results, and with them the times, grow with the size; data with more distinct values gives fewer results and faster
-searches. Time per search:
-
-| Search | 1,000 names | 10,000 | 100,000 |
-|---|---:|---:|---:|
-| `"an"`, plain prefix | 0.57 µs | 3.2 µs | 34 µs |
-| `Match.words`, first name and 3 letters | 1.5 µs | 13 µs | 202 µs |
-| The same with `searchRanked` | 1.4 µs | 13 µs | 187 µs |
-| `Match.fuzzy`, surname with a typo, 1 edit | 6.7 µs | 19 µs | 188 µs |
-| `Match.fuzzy`, surname with a typo, edits by length | 11 µs | 29 µs | 234 µs |
-| `Match.fuzzy`, full name with a typo, 1 edit | 7.7 µs | 21 µs | 329 µs |
-| `Match.fuzzy`, full name with a typo, 2 edits | 17 µs | 64 µs | 584 µs |
-| `Match.contains`, 3–4 letters of a surname | 31 µs | 309 µs | 3.8 ms |
-| `Match.contains`, 2 letters | 119 µs | 1.1 ms | 19 ms |
-
-Memory per entry for one name dimension, excluding the cached objects:
-
-| Declared as | 10,000 names | 100,000 names | Of which the text index |
-|---|---:|---:|---:|
-| No dimension | 119 B | 123 B | – |
-| `prefix` | 258 B | 207 B | 85 B |
-| `prefixSplit` | 305 B | 247 B | 85 + 40 B |
-| `prefixContains` | 479 B | 424 B | 85 + 216 B |
-
-The interactive report has a Text search view with these searches at every size. Run them yourself with
-`./gradlew jmh -Pjmh.args="TextSearchBenchmark"`, and the memory with `./gradlew textFootprint`.
-
 ## Benchmark
 
-There are two sets of benchmarks. The configuration benchmarks run zdcache alone, in every identity store with and without indexes, with `Locking.SINGLE` and with one entry per put, measuring `get`, `put`, `put` inside `atomically` and searches. The library benchmarks compare zdcache's default configuration and approximate recency, each with and without indexes, against Caffeine, cache2k, Guava, Ehcache, a plain `ConcurrentHashMap`, embedded Hazelcast and CQEngine. Both measure single-threaded `get` and `put` and prefix, exact, compound and range searches at 1,000, 3,000, 5,000, 10,000 and 50,000 entries. Four threads reading and writing by key, three threads searching with and without a fourth thread writing now and then, and locking across four types, are measured at 10,000 and 50,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry.
+There are two sets of benchmarks. The configuration benchmarks run zdcache alone, in every identity store with and without indexes, with `Locking.SINGLE` and with one entry per put, measuring `get`, `put`, `put` inside `atomically` and searches. The library benchmarks compare zdcache's default configuration and approximate recency, each with and without indexes, against Caffeine, cache2k, Guava, Ehcache, a plain `ConcurrentHashMap`, embedded Hazelcast and CQEngine. Both measure single-threaded `get` and `put` and prefix, exact, compound and range searches at 1,000, 3,000, 5,000, 10,000 and 50,000 entries. Four threads reading and writing by key, three threads searching with and without a fourth thread writing now and then, and locking across four types, are measured at 10,000 and 50,000 entries. JOL measures memory per entry. Caches without indexes answer searches by scanning every entry. The text search benchmark searches one name dimension with each `Match`, and JOL measures each way of declaring it.
 
 **[Open the full interactive report](https://zdcache.github.io/zdcache/benchmark/)** for every library and every zdcache configuration at every size, with confidence intervals and a table view.
 
@@ -569,6 +557,36 @@ How to read it: on one thread, zdcache's `get` is faster than Caffeine's at ever
 
 None of the benchmarks put the caches under eviction pressure. Caffeine and cache2k do not evict in LRU order, Guava evicts in LRU order per segment, Ehcache by sampling and zdcache in strict LRU order by default. ConcurrentHashMap, Hazelcast as configured here and CQEngine never evict.
 
+### Text search benchmark
+
+Measured on 2026-11-14 on Java 25, one thread, one fork, 3 warm-up and 5 measured iterations. Every entry is a
+student with a name made of 50 first names and 60 surnames, a third with a middle name. A query matches a fixed share
+of the names, so results, and with them the times, grow with the size; data with more distinct values gives fewer
+results and faster searches. Time per search:
+
+| Search | 1,000 names | 10,000 | 100,000 |
+|---|---:|---:|---:|
+| `"an"`, plain prefix | 0.57 µs | 3.2 µs | 34 µs |
+| `Match.words`, first name and 3 letters | 1.5 µs | 13 µs | 202 µs |
+| The same with `searchRanked` | 1.4 µs | 13 µs | 187 µs |
+| `Match.fuzzy`, surname with a typo, 1 edit | 6.7 µs | 19 µs | 188 µs |
+| `Match.fuzzy`, surname with a typo, edits by length | 11 µs | 29 µs | 234 µs |
+| `Match.fuzzy`, full name with a typo, 1 edit | 7.7 µs | 21 µs | 329 µs |
+| `Match.fuzzy`, full name with a typo, 2 edits | 17 µs | 64 µs | 584 µs |
+| `Match.contains`, 3–4 letters of a surname | 31 µs | 309 µs | 3.8 ms |
+| `Match.contains`, 2 letters | 119 µs | 1.1 ms | 19 ms |
+
+Memory per entry for one name dimension, not counting the cached objects:
+
+| Declared as | 10,000 names | 100,000 names | Of which the text indexes |
+|---|---:|---:|---:|
+| No dimension | 119 B | 123 B | – |
+| `prefix` | 258 B | 207 B | 85 B |
+| `prefixSplit` | 305 B | 247 B | 85 + 40 B |
+| `prefixContains` | 479 B | 424 B | 85 + 216 B |
+
+The interactive report's Text search view shows these searches at every size of a full run.
+
 ### What is measured
 
 | Benchmark | Measures | Threads | Entries | Workload |
@@ -589,6 +607,7 @@ None of the benchmarks put the caches under eviction pressure. Caffeine and cach
 | `LockingBenchmark.atomicBlocksAcrossTypes` | `atomically` blocks per second | 4 | 10,000 and 50,000 per type | Each block reads one type and replaces an entry in it and in the next type |
 | `LockingBenchmark.separateCallsAcrossTypes` | Calls per second, counted per group of three | 4 | 10,000 and 50,000 per type | The same read and two writes, without a block |
 | `LockingBenchmark.mixed` | Operations per second, reads and writes separately | 2 + 2 | 10,000 and 50,000 per type | Two threads read random types while two replace entries of their own type |
+| `TextSearchBenchmark.search` | Average time per search, per `Match` | 1 | 1,000 to 50,000 | One name dimension of first, middle and last names; queries from a random name, fuzzy ones with one typo |
 | `MemoryFootprint` | Heap bytes per entry, measured with JOL | – | 1,000 to 50,000 | The cache filled with every person, not counting the person objects themselves |
 | `MemoryFootprint` with `-XX:+UseCompactObjectHeaders` | Heap bytes per entry with compact object headers | – | 1,000 to 50,000 | As above, on a JVM with the 8-byte object headers Java 25 offers but leaves off |
 
@@ -596,7 +615,8 @@ Every entry is a `Person(id, name, city, age, tags)` with a six-letter random na
 from 18 to 80 and up to three tags, generated from a fixed seed. `LockingBenchmark` instead uses four record
 types, `Customer`, `Vendor`, `Warehouse` and `Carrier`, each with a name, a city and a balance and indexed on
 name (prefix) and city (exact), so every write takes its type's lock. Each cache can hold every entry, so
-nothing is evicted.
+nothing is evicted. `TextSearchBenchmark` and the text rows of `MemoryFootprint` use a `Student(id, name)`
+instead, whose name is a first name, a middle name for a third of them, and a surname, from fixed lists.
 
 | Subject in the report | Library | Identity store | Recency | Indexes | Benchmarks |
 |---|---|---|---|---|---|
@@ -669,7 +689,7 @@ Only a full run can be published. `./benchmark -publish` copies the report to `d
    geospatial indexing, sorting, pagination,
    expiration, metrics, and persistence are not yet implemented.
 5. Empty-string prefix searches match all indexed names; prefix searches are
-   **not** typo-tolerant. Separate collection dimensions do not preserve
+   **not** typo-tolerant, `Match.fuzzy` is. Separate collection dimensions do not preserve
    per-element join context; declare a `compound` inside `each` for "both
    conditions on the same nested child" queries.
 6. Cache size limits count root entities **per type**; index memory is not
